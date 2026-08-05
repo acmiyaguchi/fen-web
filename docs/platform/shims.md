@@ -68,7 +68,8 @@ their public API by construction:
   literal `KEY`) are looked up at all, under `kv.get("env/apikey/" ..
   name)`; everything else returns `nil` without ever touching kv. This is
   where issue #7's BYO-key storage writes: setting a provider's API key
-  means `kv.put("env/apikey/ANTHROPIC_API_KEY", "...")`, and any
+  means `kv.put("env/apikey/OPENAI_API_KEY", "...")` (or
+`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, …), and any
   `models.json` entry whose `apiKey` is that env-var name resolves
   through this. The allowlist exists because `os.getenv` is a shared
   global — without it, UI-writable kv content could drive `FEN_LOG`,

@@ -57,7 +57,8 @@ CI runs everything through the same flake (`nix develop -c ...`) so local and CI
 ## Auth
 
 BYO-key only — keys live in IndexedDB (demo) or `chrome.storage` (extension) and never leave the browser.
-Anthropic direct-from-page calls use `anthropic-dangerous-direct-browser-access`.
+OpenAI-compatible endpoints are the primary provider target (`api.openai.com` allows direct browser calls with a bearer key), with OpenRouter as the likely basis for actual servicing — one key, many models, CORS-open.
+Anthropic remains supported via `anthropic-dangerous-direct-browser-access`, but is not the default.
 No key-proxy infrastructure is a hard non-goal.
 
 ## Non-goals

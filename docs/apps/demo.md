@@ -12,10 +12,14 @@ see the top-level [README.md](../../README.md) non-goals.
   from fen's TUI extension, driven via `host.dom-apply`. Replaces
   termbox2's rendering, not its composition model.
 - **#7 — shell + BYO-key settings.** Single-page shell; API keys stored in
-  IndexedDB, never leave the browser. Anthropic direct-from-page calls use
-  `anthropic-dangerous-direct-browser-access`. Settings persistence is
-  part of the shim work in [../platform/shims.md](../platform/shims.md)
-  (`core/settings.fnl`, `core/llm/models.fnl`).
+  IndexedDB, never leave the browser. Provider order: OpenAI-compatible
+  endpoints first (`api.openai.com` accepts direct browser calls with a
+  bearer key; OpenRouter is the likely servicing basis — one key, many
+  models, CORS-open); Anthropic supported via
+  `anthropic-dangerous-direct-browser-access` but not the default.
+  Settings persistence is part of the shim work in
+  [../platform/shims.md](../platform/shims.md) (`core/settings.fnl`,
+  `core/llm/models.fnl`).
 - **#8 — sandboxed iframe preview + `preview.*` tools.** `preview.refresh`
   re-renders the IndexedDB tree into a sandboxed
   `<iframe sandbox="allow-scripts">`. `preview.query(selector)`,
