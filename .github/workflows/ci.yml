@@ -55,3 +55,9 @@ jobs:
           nix develop -c busted --loaders=lua,fennel
           --helper=packages/platform/tests/helper.lua --pattern=_test
           packages/platform/tests
+
+      - name: Run Fennel tests (Busted, demo presenter)
+        run: >
+          nix develop -c busted --loaders=lua,fennel
+          --helper=apps/demo/tests/helper.lua --pattern=_test
+          apps/demo/tests

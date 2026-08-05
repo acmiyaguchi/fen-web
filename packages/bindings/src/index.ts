@@ -10,3 +10,10 @@ export type { FetchPollResult } from "./fetch/pollProtocol.js";
 export type { HostKv } from "./kv/types.js";
 export { MemoryKv } from "./kv/memoryKv.js";
 export { IndexedDbKv } from "./kv/indexedDbKv.js";
+
+export type { DomOp, DomEvent, DomResult, HostDomApply } from "./dom/types.js";
+export type { DomAdapter } from "./dom/applyOps.js";
+export { applyDomOps, normalizeOps } from "./dom/applyOps.js";
+export { WebHostDomApply } from "./dom/webDomApply.js";
+export { FakeDom } from "./dom/fakeDom.js";
+export type { FakeNode } from "./dom/fakeDom.js";

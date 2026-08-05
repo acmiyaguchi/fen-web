@@ -45,6 +45,7 @@ extension points get filled without touching `fen/`.
   - [host-protocol.md](bindings/host-protocol.md) — `__fen_host`, poll pattern
   - [fetch.md](bindings/fetch.md) — `host.fetch` + fetch backend
   - [kv.md](bindings/kv.md) — `host.kv`
+  - [dom.md](bindings/dom.md) — `host.dom-apply` (issue #6)
 - **platform/** — Fennel-side shims and registrations over the host primitives.
   - [shims.md](platform/shims.md) — issue #15, host IO profiles (#22)
   - [tools.md](platform/tools.md) — issue #4
@@ -73,7 +74,12 @@ page-load compile cost (#19), cooperative-retry busy-spin backpressure
 (#20), `require`/pump reentrancy (#21), and formalizing the two host IO
 profiles (#22, see [platform/shims.md](platform/shims.md)).
 
-Not yet started: `apps/demo` (#6-#9, BYO-key single-page shell, iframe
-preview, DOM presenter) and `apps/extension` (#11, deferred, trails the
-demo) remain design-only. See the top-level [README.md](../README.md) for
-the architecture summary and layout.
+`apps/demo`'s DOM presenter (#6) has landed: the `host.dom-apply` primitive
+(`packages/bindings/src/dom`, see [bindings/dom.md](bindings/dom.md)) plus a
+Fennel DOM presenter (`apps/demo/fnl/fen_web/demo`, see
+[apps/demo.md](apps/demo.md)) that reuses fen's compositional panel/fragment
+model and diffs one batched mutation list per frame. The rest of `apps/demo`
+(#7-#9, BYO-key single-page shell, iframe preview, starter project) and
+`apps/extension` (#11, deferred, trails the demo) remain design-only. See
+the top-level [README.md](../README.md) for the architecture summary and
+layout.

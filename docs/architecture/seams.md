@@ -14,7 +14,7 @@ never a patch to fen-web's copy of core.
 | HTTP backend | `fen/packages/util/src/fen/util/http/backend.fnl` — `{:request (fn [opts])}`, 11-line interface | `packages/bindings/fnl/fen/util/http/backends/fetch.fnl` over `host.fetch`; see [../bindings/fetch.md](../bindings/fetch.md) |
 | Session backend | `fen/packages/core/src/fen/core/extensions/register/session_backend.fnl` — `open/open-existing/append/close/load/find/list/latest` | Implemented: `:kv` backend over `host.kv`, issue #14 (closed); see [../platform/sessions.md](../platform/sessions.md) |
 | Tool registry | `fen/packages/core/src/fen/core/extensions/register/tool.fnl` — `api.register :tool` with `{:name :description :parameters :exposure :execute}` | Implemented: browser-native read/edit/write/find/grep/ls registered under builtin-tools' names, issue #4 (closed); see [../platform/tools.md](../platform/tools.md) |
-| Presenter | `fen/extensions/adapters/presenters/web/manifest.fnl` (existing server-side web presenter) — compositional panel/fragment model | Planned: DOM presenter over `host.dom-apply`, reusing the same model, issue #6 |
+| Presenter | `fen/extensions/adapters/presenters/web/manifest.fnl` (existing server-side web presenter) — compositional panel/fragment model | Implemented: DOM presenter over `host.dom-apply` (`apps/demo/fnl/fen_web/demo`) reusing the same panel/fragment model, issue #6; see [../apps/demo.md](../apps/demo.md) and [../bindings/dom.md](../bindings/dom.md) |
 | Reload/loader | `fen/packages/core/src/fen/core/extensions/loader/reload.fnl`, `discover.fnl`, `manifest.fnl` | Reused with substitutions; see [../runtime/reload.md](../runtime/reload.md) |
 
 ## Installation pattern

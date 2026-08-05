@@ -29,10 +29,12 @@ wiring.
 | `host.msg` | `chrome.runtime` messaging (extension form) |
 | `host.ext` | Guarded proxy to specific `chrome.*` namespaces (extension form) |
 
-`host.fetch` and `host.kv` are implemented in `packages/bindings`; see
-[../bindings/fetch.md](../bindings/fetch.md) and
-[../bindings/kv.md](../bindings/kv.md). `host.dom-apply`, `host.msg`, and
-`host.ext` are not yet implemented (planned per apps #6-#9, #11).
+`host.fetch`, `host.kv`, and `host.dom-apply` are implemented in
+`packages/bindings`; see [../bindings/fetch.md](../bindings/fetch.md),
+[../bindings/kv.md](../bindings/kv.md), and
+[../bindings/dom.md](../bindings/dom.md) (issue #6, the DOM presenter
+seam). `host.msg` and `host.ext` are not yet implemented (planned per the
+extension form, #11).
 
 ## Why this split
 
