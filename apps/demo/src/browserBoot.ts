@@ -1,6 +1,7 @@
 import {
   IndexedDbKv,
   SyncKvCache,
+  validateStarterFiles,
   WebHostDomApply,
   WebHostFetch,
   WebHostPreview,
@@ -35,6 +36,15 @@ export async function bootDemoInBrowser(
   opts: BrowserBootOptions = {},
 ): Promise<DemoSession> {
   const kvBacking = new IndexedDbKv(opts.dbName ?? "fen-web-demo");
+  // First-load starter seed (fen-web#9): atomically + durably seed the curated
+  // starter project into IndexedDB BEFORE snapshotting, so the synchronous
+  // cache only ever sees a consistent, fully-seeded (or fully-untouched) vfs.
+  // seedIfEmpty is one conditional IndexedDB transaction — race-safe across
+  // tabs, all-or-nothing on failure, gated on a seed-complete marker — so a
+  // returning user's work is never clobbered and an interrupted seed is
+  // retried rather than left permanently half-written. validateStarterFiles
+  // fails boot loudly if the bundle is missing/malformed (it is required).
+  await kvBacking.seedIfEmpty(validateStarterFiles(buildStarterFiles()));
   // fen's kv-backed seams (sessions, fs_kv) call kv synchronously; mirror
   // the store into a synchronous cache at boot (see SyncKvCache). Loading
   // here also captures the current stored API key for in-VM resolution.
@@ -43,7 +53,6 @@ export async function bootDemoInBrowser(
 
   return bootDemo(opts, {
     sources: buildDemoSources(),
-    starterFiles: buildStarterFiles(),
     fetchBackendSource,
     fennelSource,
     cjsonSource: cjsonStubSource,

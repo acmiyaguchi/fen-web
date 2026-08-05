@@ -5,9 +5,10 @@
  * (index.html + app.js + styles.css). The browser can't read the filesystem,
  * so — exactly like the Fennel source trees in `src/sources.ts` — they are
  * inlined at bundle time via Vite's `import.meta.glob(..., { query: "?raw" })`
- * and mapped to absolute vfs paths (`/index.html`, ...). `boot.ts` stages the
- * result into the VM, where `fen_web.demo.seed` writes it into the `fs:`
- * keyspace on a genuine first load (see `fen_web.demo.boot`).
+ * and mapped to absolute vfs paths (`/index.html`, ...). `browserBoot.ts`
+ * validates the bundle and seeds it into IndexedDB atomically on a genuine
+ * first load via `IndexedDbKv.seedIfEmpty` (see `packages/bindings`'s
+ * `starterSeed.ts`), before the VM ever snapshots the store.
  */
 
 type RawGlob = Record<string, string>;

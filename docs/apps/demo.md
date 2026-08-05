@@ -95,19 +95,30 @@ see the top-level [README.md](../../README.md) non-goals.
   preview-driving loop is demoable in one click). The starter files are
   real, reviewable source under `apps/demo/starter/` (`index.html` +
   `app.js` + `styles.css`); the browser bundles them to raw text via
-  `import.meta.glob` (`src/starter.ts`) and `boot.ts` stages them into the
-  VM, the same delivery shape as the vendored Fennel/fetch sources. Seeding
-  itself is Fennel policy (`fen_web.demo.seed`, called from
-  `fen_web.demo.boot`): the bytes are written into the `fs:` vfs keyspace
-  through the ordinary `fen_web.tools.vfs` mechanism — no new persistence
-  path. **Seed-once invariant:** `seed-if-empty!` writes only when the vfs
-  is empty (a genuine first load), so a later load never clobbers user
-  work. The seeded `/index.html` renders through the existing
+  `import.meta.glob` (`src/starter.ts`). **Durable, race-safe seed
+  mechanism.** The seed runs in the JS/durable layer, not the Lua VM:
+  `browserBoot.ts` validates the bundle (`validateStarterFiles` — a
+  missing/malformed bundle fails boot loudly, since the starter is required)
+  and commits it with `IndexedDbKv.seedIfEmpty` **before** the synchronous
+  `SyncKvCache` snapshot is taken. That commit is a single conditional
+  IndexedDB transaction: because IndexedDB serializes readwrite transactions
+  on the store, the emptiness check and the writes cannot interleave with
+  another tab, so a concurrent seed sees the marker/files and no-ops —
+  **user work is never clobbered**. It is all-or-nothing (the whole
+  transaction aborts on any error, persisting nothing) and durable (resolves
+  only on `oncomplete`), so a page close / quota / abort leaves the store
+  untouched and the next boot retries rather than inheriting a broken
+  half-seed. **Seed-once gate:** seed only when the seed-complete marker
+  (`seed:starter-complete`, outside the `fs:` keyspace) is absent AND no
+  `fs:` file exists; the marker is written last within the same transaction,
+  and the gate is a cheap marker `get` + one-step key cursor, never a full
+  workspace walk. The seeded `/index.html` renders through the existing
   `preview.refresh`/`build-page` assembler out of the box (same-tree
-  `styles.css`/`app.js` inlined). Coverage: `apps/demo/tests/seed_test.fnl`
-  (first-load seeds, non-empty vfs untouched, seeded entry renders through
-  `build-page`) and the end-to-end seed assertion in
-  `apps/demo/src/bootTurn.test.ts`.
+  `styles.css`/`app.js` inlined). Coverage:
+  `packages/bindings/src/kv/starterSeed.test.ts` (validation, empty-seed,
+  idempotence, no-clobber), `apps/demo/tests/seed_test.fnl` (the seeded
+  entry renders through both `build-page` and `preview.refresh`), and the
+  end-to-end seed assertion in `apps/demo/src/bootTurn.test.ts`.
 
 ## Sandboxing invariant
 

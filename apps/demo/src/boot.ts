@@ -40,13 +40,12 @@ export interface DemoRuntimeDeps {
   fetchBackendSource: string;
   /** Synchronous kv view over the store (SyncKvCache in the browser, a
    * table-backed stub in tests). The API key must already be present under
-   * `env/apikey/<VAR>` before boot. */
+   * `env/apikey/<VAR>` before boot; the first-load starter project
+   * (fen-web#9) must also already be seeded into the durable store, since the
+   * atomic/durable seed happens against the async backing before this
+   * synchronous view is snapshotted (browserBoot.ts / IndexedDbKv.seedIfEmpty).
+   */
   kv: unknown;
-  /** First-load starter project (fen-web#9): vfs-path -> file contents,
-   * bundled from `apps/demo/starter/` (browser) or read from disk (tests).
-   * `fen_web.demo.seed` writes these into the `fs:` keyspace only when the
-   * vfs is empty, so a later load never clobbers user work. */
-  starterFiles: Record<string, string>;
   /** DOM sink: WebHostDomApply in the browser, FakeDom in tests. */
   dom: { apply(ops: DomOp[]): unknown };
   /** Sandboxed-iframe preview host: WebHostPreview in the browser, FakePreview
@@ -135,14 +134,6 @@ export async function bootDemo(
     provider,
     model: opts.model,
   });
-
-  // Stage the bundled starter files for the in-VM seeder (fen_web.demo.seed),
-  // the same delivery shape as the fetch-backend source above: a single string.
-  // It must be JSON, not a bare JS object — an object set as a Lua global is a
-  // wasmoon proxy whose keys `pairs` cannot iterate; boot.fnl `json.decode`s
-  // this into a genuine Lua table. Seeding itself (which files, only-when-empty)
-  // is Fennel policy, not JS.
-  rt.lua.global.set("__fen_starter_files_json", JSON.stringify(deps.starterFiles ?? {}));
 
   const pump = await rt.createCoroutinePump(
     `function() return (require "fen_web.demo.boot").run(__demo_opts) end`,

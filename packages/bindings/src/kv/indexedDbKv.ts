@@ -1,4 +1,10 @@
 import type { HostKv } from "./types.js";
+import {
+  FS_PREFIX,
+  SEED_MARKER_KEY,
+  fsKeyFor,
+  validateStarterFiles,
+} from "./starterSeed.js";
 
 const STORE_NAME = "kv";
 
@@ -72,6 +78,65 @@ export class IndexedDbKv implements HostKv {
     const store = await this.store("readwrite");
     const req = store.delete(key);
     await IndexedDbKv.wrapWrite(req, store.transaction);
+  }
+
+  /**
+   * Atomically seed the starter project (fen-web#9) into the store on a
+   * genuine first load, in a SINGLE readwrite IndexedDB transaction, and
+   * report whether it wrote.
+   *
+   * This is the review's race + durability fix. IndexedDB serializes readwrite
+   * transactions on an object store, so the conditional check and the writes
+   * cannot interleave with another tab: a concurrent seed runs entirely before
+   * or after this one and then sees the marker / existing files and no-ops —
+   * user work is never clobbered. The commit is all-or-nothing (the whole
+   * transaction aborts on any error, persisting nothing) and durable (it only
+   * resolves on `oncomplete`), so a page close / quota / abort leaves the
+   * store untouched and the next boot retries rather than inheriting a broken
+   * half-seed. The gate is cheap: one marker `get` plus a one-step key cursor,
+   * never a full workspace walk+sort.
+   *
+   * Gate: seed only when the seed-complete marker is absent AND no "fs:" file
+   * exists (a returning user with files but no marker is treated as their work
+   * and left alone). The marker is written last within the same transaction.
+   */
+  async seedIfEmpty(
+    files: Record<string, string>,
+    markerKey: string = SEED_MARKER_KEY,
+  ): Promise<boolean> {
+    const valid = validateStarterFiles(files);
+    const db = await this.dbPromise;
+    return new Promise<boolean>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      let seeded = false;
+      const markerReq = store.get(markerKey);
+      markerReq.onsuccess = () => {
+        // A completed prior seed: leave the (empty) transaction to commit as a
+        // no-op.
+        if (markerReq.result !== undefined) return;
+        // No marker: refuse to clobber any pre-existing user/vfs content.
+        const cursorReq = store.openKeyCursor(IDBKeyRange.lowerBound(FS_PREFIX));
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (cursor && String(cursor.key).startsWith(FS_PREFIX)) return;
+          // Empty + unmarked: commit every starter file plus the marker last,
+          // all within this one atomic transaction.
+          for (const [path, contents] of Object.entries(valid)) {
+            store.put(contents, fsKeyFor(path));
+          }
+          store.put(new Date().toISOString(), markerKey);
+          seeded = true;
+        };
+        cursorReq.onerror = () => tx.abort();
+      };
+      markerReq.onerror = () => tx.abort();
+      tx.oncomplete = () => resolve(seeded);
+      tx.onerror = () =>
+        reject(tx.error ?? new Error("IndexedDbKv.seedIfEmpty: transaction failed"));
+      tx.onabort = () =>
+        reject(tx.error ?? new Error("IndexedDbKv.seedIfEmpty: transaction aborted"));
+    });
   }
 
   async list(prefix: string): Promise<string[]> {
