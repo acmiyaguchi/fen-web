@@ -78,11 +78,16 @@
                 (if content (.. "<script>\n" content "\n</script>") nil))
               nil))))))
 
-(local FALLBACK-PAGE
+;; entry is agent-supplied, so it must be concatenated in (not used as a
+;; string.gsub replacement): a path containing '%' would be read as a capture
+;; reference and throw "invalid capture index", which — because refresh-tool
+;; runs uncaught in cooperative mode — would unwind the whole turn instead of
+;; showing the fallback page.
+(fn fallback-page [entry]
   (.. "<!doctype html><html><head><meta charset=\"utf-8\">"
       "<title>fen-web preview</title></head><body>"
       "<p style=\"font-family:sans-serif;color:#555\">"
-      "No preview entry found. Create __ENTRY__ in the workspace, then run "
+      "No preview entry found. Create " entry " in the workspace, then run "
       "preview.refresh.</p></body></html>"))
 
 ;; @doc fen_web.demo.preview.html.build-page
@@ -94,7 +99,7 @@
   (let [entry (if (or (not entry-path) (= entry-path "")) "/index.html" entry-path)
         (content _err) (vfs.read-file kv entry)]
     (if (not content)
-        (values (string.gsub FALLBACK-PAGE "__ENTRY__" entry) false)
+        (values (fallback-page entry) false)
         (let [base (dirname entry)
               styled (M.inline-styles kv base content)
               inlined (M.inline-scripts kv base styled)]

@@ -75,6 +75,19 @@
               (assert.is_truthy (string.find page "No preview entry" 1 true))
               (assert.is_truthy (string.find page "/index.html" 1 true)))))
 
+        (it "builds the fallback for an entry path containing '%' without throwing"
+          (fn []
+            ;; Regression: entry is agent-supplied and was once used as a
+            ;; string.gsub replacement, so a '%' threw \"invalid capture index\"
+            ;; and unwound the (uncaught, cooperative) refresh turn.
+            (let [kv (make-kv)
+                  entry "/we%20ird%.html"
+                  (ok? page found?) (pcall html.build-page kv entry)]
+              (assert.is_true ok?)
+              (assert.is_false found?)
+              (assert.is_truthy (string.find page "No preview entry" 1 true))
+              (assert.is_truthy (string.find page entry 1 true)))))
+
         (it "inlines same-tree stylesheet and script references from the vfs"
           (fn []
             (let [kv (make-kv)]
@@ -221,4 +234,50 @@
                 {:register (fn [_ s] (when (= s.name :preview.query) (set tool s)))})
               (let [(ok? err) (pcall tool.execute {:selector "#x"} {} nil)]
                 (assert.is_false ok?)
-                (assert.is_truthy (string.find (tostring err) "cooperative" 1 true))))))))))
+                (assert.is_truthy (string.find (tostring err) "cooperative" 1 true))))))
+
+        (it "times out (structured error + dispose) when the preview never replies"
+          (fn []
+            ;; A preview whose poll never reports done \u2014 e.g. a blank iframe
+            ;; driven before preview.refresh. With a yield-fn present, the loop
+            ;; must not spin forever: the Fennel-side liveness bound disposes
+            ;; and returns a structured {:ok false :error ...} rather than
+            ;; hanging the turn coroutine.
+            (let [prev (make-preview)
+                  disposed []]
+              (set prev.preview_rpc_poll (fn [_id] {:done false}))
+              (set prev.preview_rpc_dispose
+                   (fn [id] (table.insert disposed id)))
+              (install-host! (make-kv) prev)
+              (var yields 0)
+              (let [r (preview.rpc! {:method :query :selector "#x"}
+                                    (fn [] (set yields (+ yields 1)))
+                                    {:max-polls 3})]
+                (assert.is_false r.ok)
+                (assert.is_truthy (string.find r.error "timed out" 1 true))
+                (assert.is_truthy (string.find r.error "preview.refresh" 1 true))
+                ;; bounded: it yielded a few times then gave up, and cleaned up.
+                (assert.is_true (<= yields 3))
+                (assert.are.equal 1 (length disposed))))))
+
+        (it "surfaces the RPC timeout as a structured tool error (not a throw)"
+          (fn []
+            ;; The tool wrapper must turn the timeout into a tool error, the
+            ;; same shape a real RPC failure produces \u2014 never an uncaught throw.
+            (let [prev (make-preview)]
+              (set prev.preview_rpc_poll (fn [_id] {:done false}))
+              (install-host! (make-kv) prev)
+              (var tool nil)
+              (preview.register
+                {:register (fn [_ s] (when (= s.name :preview.query) (set tool s)))})
+              ;; Drive M.rpc! straight to the timeout branch by exhausting the
+              ;; poll ceiling on the very first poll.
+              (let [orig preview.rpc!]
+                (set preview.rpc!
+                     (fn [req yield _opts] (orig req yield {:max-polls 1})))
+                (let [(ok? r) (pcall tool.execute {:selector "#x"}
+                                     {} (fn [] nil))]
+                  (set preview.rpc! orig)
+                  (assert.is_true ok?)
+                  (assert.is_true r.is-error?)
+                  (assert.is_truthy (string.find (text-of r) "timed out" 1 true)))))))))))

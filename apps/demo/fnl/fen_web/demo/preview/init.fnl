@@ -13,7 +13,12 @@
 ;; (host.preview rpc start/poll/dispose). The RPC is asynchronous (a round
 ;; trip to another execution context), so — like the fetch backend — each
 ;; tool polls and yields the turn coroutine between polls rather than blocking
-;; (docs/bindings/preview.md, docs/bindings/host-protocol.md).
+;; (docs/bindings/preview.md, docs/bindings/host-protocol.md). Unlike
+;; host.fetch, which bounds itself with host-side timeouts surfaced as
+;; poll.done+error, host.preview's poll has no host-side timeout, so M.rpc!
+;; enforces the liveness bound in Fennel: a preview that never replies (e.g.
+;; a blank iframe driven before preview.refresh) surfaces a structured
+;; {:ok false :error ...} rather than yielding the turn forever.
 ;;
 ;; SECURITY: user JS in the iframe cannot reach the parent FS, API key, or
 ;; forge token — the iframe is allow-scripts with NO allow-same-origin and the
@@ -27,24 +32,49 @@
 
 (local M {})
 
+;; Liveness bound for a single preview RPC (see the header note): wall-clock
+;; deadline plus a hard poll ceiling so a preview that never replies (e.g. a
+;; blank iframe driven before preview.refresh) surfaces a structured error
+;; rather than yielding the turn coroutine forever. Overridable per call via
+;; the ?opts arg (tests pass a tiny :max-polls to exercise the timeout path).
+(local DEFAULT-TIMEOUT-S 30)
+(local DEFAULT-MAX-POLLS 1000000)
+
 (fn get-host []
   (let [host _G.__fen_host]
     (if host host (error "fen_web.demo.preview: __fen_host is not installed"))))
 
 ;; @doc fen_web.demo.preview.rpc!
 ;; kind: function
-;; signature: (rpc! req ?yield-fn) -> {:ok bool :value any :error string}
-;; summary: Run one preview RPC over host.preview's async start/poll/dispose bridge, yielding the turn coroutine between polls (mirroring the fetch backend). Requires a cooperative yield-fn when the reply is not immediate; errors clearly otherwise so it never hot-spins.
-;; tags: preview rpc host yield
-(fn M.rpc! [req ?yield-fn]
-  (let [host (get-host)
-        id (host.preview_rpc_start req)]
+;; signature: (rpc! req ?yield-fn ?opts) -> {:ok bool :value any :error string}
+;; summary: Run one preview RPC over host.preview's async start/poll/dispose bridge, yielding the turn coroutine between polls (like the fetch backend, but with the liveness bound enforced here in Fennel since host.preview has no host-side timeout). Requires a cooperative yield-fn when the reply is not immediate; on a timeout or missing yield-fn it disposes and returns a structured {:ok false :error ...} so a never-answering preview surfaces a tool error rather than hanging the turn. ?opts overrides {:timeout-s :max-polls} for tests.
+;; tags: preview rpc host yield timeout
+(fn M.rpc! [req ?yield-fn ?opts]
+  (let [opts (or ?opts {})
+        timeout-s (or opts.timeout-s DEFAULT-TIMEOUT-S)
+        max-polls (or opts.max-polls DEFAULT-MAX-POLLS)
+        host (get-host)
+        id (host.preview_rpc_start req)
+        deadline (+ (os.time) timeout-s)]
     (var result nil)
+    (var polls 0)
     (while (not result)
+      (set polls (+ polls 1))
       (let [poll (host.preview_rpc_poll id)]
         (if poll.done
             (do (host.preview_rpc_dispose id)
                 (set result (or poll.result {:ok false :error "empty preview result"})))
+            ;; Liveness cap: a preview that never answers (a blank iframe
+            ;; driven before preview.refresh) would otherwise poll forever.
+            ;; Surface the timeout as the same {:ok false :error ...} shape a
+            ;; real RPC failure uses, so the tools return a structured error.
+            (or (>= (os.time) deadline) (>= polls max-polls))
+            (do (host.preview_rpc_dispose id)
+                (set result
+                     {:ok false
+                      :error (.. "preview RPC timed out with no reply — did you "
+                                 "run preview.refresh first? A blank preview "
+                                 "never answers.")}))
             ?yield-fn (?yield-fn)
             (do (host.preview_rpc_dispose id)
                 (error "preview RPC requires a cooperative turn (no yield-fn)")))))
@@ -170,15 +200,22 @@
 (local tool-specs
   [refresh-tool query-tool click-tool fill-tool eval-tool screenshot-tool])
 
+;; Build a fresh spec table with :always exposure rather than mutating the
+;; shared module-level singleton in tool-specs (which register would otherwise
+;; re-mutate on every call / hot-reload).
+(fn with-always-exposure [spec]
+  (let [s (collect [k v (pairs spec)] k v)]
+    (set s.exposure :always)
+    s))
+
 ;; @doc fen_web.demo.preview.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the demo-only preview.refresh/query/click/fill/eval/screenshot tools through the per-owner :tool register kind, with :always exposure so the agent can drive its freshly built app without a tool_search gate.
+;; summary: Register the demo-only preview.refresh/query/click/fill/eval/screenshot tools through the per-owner :tool register kind, with :always exposure so the agent can drive its freshly built app without a tool_search gate. Registers fresh spec tables so the shared module-level specs are never mutated.
 ;; tags: preview tools register extension
 (fn M.register [api]
   (each [_ spec (ipairs tool-specs)]
-    (set spec.exposure :always)
-    (api.register :tool spec))
+    (api.register :tool (with-always-exposure spec)))
   true)
 
 M

@@ -50,7 +50,7 @@ asserts the page assembler never emits the stored API key.
 | `preview_rpc_poll(id)` | `{done, result?}` — `result` is `{ok, value?, error?}` once the iframe replies |
 | `preview_rpc_dispose(id)` | drop terminal state for a completed RPC (mandatory cleanup) |
 
-The RPC is asynchronous (a round trip to another context), so — exactly like
+The RPC is asynchronous (a round trip to another context), so — like
 `host.fetch` — the Fennel side starts, polls, and yields the turn coroutine
 between polls rather than passing a callback that would resume Lua across a
 C-call boundary:
@@ -65,6 +65,18 @@ C-call boundary:
           (yield-fn))))
   result)
 ```
+
+Parity with `host.fetch` is not total, and the Fennel side owns the
+difference. `host.fetch` bounds itself with host-side timeouts that the JS
+transport surfaces as `poll.done + error`; `host.preview`'s poll has **no**
+host-side timeout and returns `{done:false}` forever if the iframe never
+replies. A blank iframe (created by driving a `preview.*` tool *before*
+`preview.refresh`, so `srcdoc` is never set) has no responder, so its RPCs
+never answer. To keep that from hanging the turn coroutine indefinitely,
+`fen_web.demo.preview.rpc!` enforces the liveness bound in Fennel — a
+wall-clock deadline plus a hard poll ceiling — and surfaces a timeout as the
+same `{ok=false, error=…}` shape a real RPC failure uses, so the driving
+tool returns a structured tool error instead of yielding forever.
 
 ## The `preview.*` tools
 
