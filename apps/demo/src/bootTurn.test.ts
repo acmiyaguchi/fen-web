@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { loadFenTree, type FenSource } from "@fen-web/runtime";
 import {
   FakeDom,
+  FakePreview,
   type DomOp,
   type FetchRequestOptions,
   type FetchResult,
@@ -161,6 +162,7 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
     fetchBackendSource: fetchBackendSource(),
     kv,
     dom,
+    preview: new FakePreview(),
     fetch: recorder.fetch,
     schedule,
   };

@@ -57,7 +57,9 @@
 (local DEFAULT-SYSTEM
   (.. "You are fen, a coding agent running entirely in the user's browser. "
       "The workspace is a virtual filesystem backed by IndexedDB; use the "
-      "read/write/edit/find/grep/ls tools to work in it. Be concise."))
+      "read/write/edit/find/grep/ls tools to work in it. When you build a web "
+      "app, render it with preview.refresh and drive it with preview.query/"
+      "click/fill/eval/screenshot to verify it works. Be concise."))
 
 (local SUPPORTED-PROVIDERS {:anthropic true})
 
@@ -222,6 +224,9 @@
       (register-inline! :fen_web_provider_anthropic
                         (fn [api] (api.register :provider spec)))
       (M.load-extension! :fen_web.tools.manifest)
+      ;; Demo-only preview tools (fen-web#8): the agent drives the app it just
+      ;; built in the vfs through the sandboxed iframe over host.preview.
+      (M.load-extension! :fen_web.demo.preview.manifest)
       (register-inline! :fen_web_sessions sessions-init.register)
       (M.load-extension! :fen_web.demo.manifest)
       (session-backend-registry.set-active! :kv)

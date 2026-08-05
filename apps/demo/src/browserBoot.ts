@@ -3,6 +3,7 @@ import {
   SyncKvCache,
   WebHostDomApply,
   WebHostFetch,
+  WebHostPreview,
 } from "@fen-web/bindings";
 import { bootDemo, type DemoBootOptions, type DemoSession } from "./boot.js";
 import { buildDemoSources } from "./sources.js";
@@ -46,6 +47,9 @@ export async function bootDemoInBrowser(
     cjsonSource: cjsonStubSource,
     kv,
     dom,
+    // The sandboxed preview iframe mounts under #fen-preview (index.html);
+    // it renders the IndexedDB app tree and never gets allow-same-origin.
+    preview: new WebHostPreview({ mountId: "fen-preview" }),
     fetch: new WebHostFetch(),
     flush: () => kv.flush(),
   });
