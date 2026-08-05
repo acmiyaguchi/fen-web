@@ -52,9 +52,6 @@ their public API by construction:
   err` rather than throwing — matching the fact that a real update-mode
   open can fail for ordinary, already-handled reasons. A genuinely
   malformed mode string still `error()`s, matching real `io.open`.
-- `os.remove(path)` → `kv.delete(path)`.
-- `os.rename(from, to)` → copies the kv value to `to` and deletes `from`,
-  for `settings.fnl`'s atomic-write-then-rename dance.
 - `os.execute(cmd)` → success only when `cmd` matches `^mkdir %-p`
   (`settings.fnl`'s `ensure-dir!`, meaningless over a flat kv namespace
   but harmless to report as done); anything else returns failure (`nil,
@@ -134,6 +131,44 @@ either needs to already be covered here or is a new blast-radius gap):
 | `fen.core.extensions.loader.discover`, `fen.core.extensions.loader.reload`, `fen.core.extensions.rocks`, `fen.util.checksum`, `fen.util.log`, `fen.util.text` | `os.getenv` (`FEN_FIRST_PARTY_EXTENSIONS_PATH`, `FEN_EXTENSIONS_PATH`, `FEN_DEV_PATH`, `FEN_ROCKS_TREE`, `LUA`, `FEN_LOG`, `FEN_TOOL_RESULT_MAX_BYTES`) | All `FEN_*`/dev-tooling flags — none API-key-shaped, so all return `nil` regardless of kv content. This is deliberate: these are debug/dev escape hatches, not something UI-writable browser state should ever drive |
 | `fen.fen.main`, `fen.fen.runtime`, `fen.fen.update` | `os.getenv` (`FEN_BIN`, `PATH`, `FEN_ARCH`) | CLI-launcher-only concerns not reachable in-VM in the browser runtime at all (these modules aren't part of the `fen.core.agent` require subgraph `packages/runtime` boots); listed for completeness in case that changes |
 
+## Host IO profiles
+
+Tracked as [issue #22](https://github.com/acmiyaguchi/fen-web/issues/22),
+filed after both strategies below existed and turned out to conflict.
+Not yet implemented as an explicit choice — today it's just "which script
+you run."
+
+Two working IO strategies exist and are **mutually exclusive**:
+
+- **`browser-kv`** — `fs_kv.install!` is called: `io.open`/`os.remove`/
+  `os.rename`/`os.execute`/`os.getenv` are monkey-patched onto `host.kv`
+  (see above). This is the only sane choice under wasmoon regardless of
+  host, since [wasmoon's `io`/`os` reach an Emscripten MEMFS virtual
+  filesystem, not the real one, even under Node](../runtime/boot.md#in-vm-io-and-os-reach-a-virtual-filesystem-not-the-host)
+  — real `io.open` calls are meaningless in-VM without this shim.
+  Used by `turn.test.ts` ([integration.md](../integration.md)).
+- **`node-passthrough`** — `fs_kv` is **not** installed; instead, real
+  files are mounted into wasmoon's MEMFS via its internal FS object (see
+  [integration.md](../integration.md)'s MEMFS section and
+  [issue #18](https://github.com/acmiyaguchi/fen-web/issues/18)), so
+  fen's own `io.open`/`os.getenv` calls resolve against those mounted
+  bytes unmodified. Used by `e2e-codex.mts`, which needs
+  `openai_codex_keychain.fnl`'s real OAuth-file reads to work without any
+  patching.
+
+**Mixing silently breaks.** Installing `fs_kv` after real files are
+mounted (or vice versa) doesn't error — it just makes one strategy's
+writes invisible to the other's reads, since `fs_kv` redirects `io.open`
+to `host.kv` while the mount writes land in MEMFS proper. There is no
+runtime-level guard against this today; `createFenRuntime`
+([../runtime/boot.md](../runtime/boot.md)) has no concept of an IO
+profile — a caller picks one implicitly by which of `fs_kv.install!` /
+`mountRealAuthJson`-style mounting it calls, and nothing stops it calling
+both. The ask in #22 is for the runtime/bootstrap to expose an explicit
+profile choice (`"browser-kv" | "node-passthrough"`) and error on an
+incoherent combination, rather than leaving this as a convention two
+call sites happen to follow correctly today.
+
 ## Mechanism
 
 Same as the HTTP backend: preload replacement Fennel modules into
@@ -144,8 +179,9 @@ just hard dependencies that need blind substitution). `fs-kv` uses a
 variant of this — global monkey-patching instead of a `package.loaded`
 substitution — since `io`/`os` are stdlib globals, not `require`d modules.
 
-Blocks [issue #5](https://github.com/acmiyaguchi/fen-web/issues/5)
-(headless turn milestone).
+Blocked [issue #5](https://github.com/acmiyaguchi/fen-web/issues/5)
+(headless turn milestone; closed) until this shim landed.
 
 See also: [../bindings/kv.md](../bindings/kv.md),
-[../runtime/reload.md](../runtime/reload.md).
+[../runtime/reload.md](../runtime/reload.md),
+[../integration.md](../integration.md).

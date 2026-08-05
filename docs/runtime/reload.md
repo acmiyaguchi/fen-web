@@ -36,7 +36,9 @@ Persisted chunk cache in `host.kv`, keyed on
 `reload.fnl:112` currently loads with mode `"t"` (text only) — a
 `string.dump` bytecode cache needs that mode widened to `"bt"`. Prior art:
 `fen/scripts/test/fennel_compile_cache.lua`. Rockspec/native-build tooling
-(`rocks.fnl`, `build.fnl`) stays permanently out of browser scope.
+(`rocks.fnl`, `build.fnl`) stays permanently out of browser scope. Filed
+as [issue #19](https://github.com/acmiyaguchi/fen-web/issues/19); not yet
+implemented.
 
 ## Related shim
 

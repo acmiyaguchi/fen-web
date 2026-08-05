@@ -12,8 +12,8 @@ never a patch to fen-web's copy of core.
 | Seam | fen contract | fen-web fulfillment |
 |---|---|---|
 | HTTP backend | `fen/packages/util/src/fen/util/http/backend.fnl` — `{:request (fn [opts])}`, 11-line interface | `packages/bindings/fnl/fen/util/http/backends/fetch.fnl` over `host.fetch`; see [../bindings/fetch.md](../bindings/fetch.md) |
-| Session backend | `fen/packages/core/src/fen/core/extensions/register/session_backend.fnl` — `open/open-existing/append/close/load/find/list/latest` | Planned: IndexedDB backend over `host.kv`, issue #14; see [../platform/sessions.md](../platform/sessions.md) |
-| Tool registry | `fen/packages/core/src/fen/core/extensions/register/tool.fnl` — `api.register :tool` with `{:name :description :parameters :exposure :execute}` | Planned: browser-native read/edit/write/find/grep registered under builtin-tools' names, issue #4; see [../platform/tools.md](../platform/tools.md) |
+| Session backend | `fen/packages/core/src/fen/core/extensions/register/session_backend.fnl` — `open/open-existing/append/close/load/find/list/latest` | Implemented: `:kv` backend over `host.kv`, issue #14 (closed); see [../platform/sessions.md](../platform/sessions.md) |
+| Tool registry | `fen/packages/core/src/fen/core/extensions/register/tool.fnl` — `api.register :tool` with `{:name :description :parameters :exposure :execute}` | Implemented: browser-native read/edit/write/find/grep/ls registered under builtin-tools' names, issue #4 (closed); see [../platform/tools.md](../platform/tools.md) |
 | Presenter | `fen/extensions/adapters/presenters/web/manifest.fnl` (existing server-side web presenter) — compositional panel/fragment model | Planned: DOM presenter over `host.dom-apply`, reusing the same model, issue #6 |
 | Reload/loader | `fen/packages/core/src/fen/core/extensions/loader/reload.fnl`, `discover.fnl`, `manifest.fnl` | Reused with substitutions; see [../runtime/reload.md](../runtime/reload.md) |
 
@@ -65,6 +65,17 @@ than worked around locally, per the "widen the seam in fen" rule above:
   supports blocking (non-yield) calls, so callers like `fen.update` can
   detect a cooperative-only backend (see [../bindings/fetch.md](../bindings/fetch.md))
   instead of hard-hanging.
+- [fen#481](https://github.com/acmiyaguchi/fen/issues/481) — module-load-time
+  `io.popen` in the Codex provider's User-Agent detection is an embedding
+  hazard: it crashes on a nil `io.popen` (wasmoon has none) before the
+  module's own already-documented fallback can apply. Found via the live
+  Codex e2e harness; see [../integration.md](../integration.md).
+- [fen#482](https://github.com/acmiyaguchi/fen/issues/482) — verify the
+  OpenAI adapter's `finish_reason: null` handling under a real lua-cjson
+  truthy-`null`-sentinel decode, filed from fen-web's own
+  [issue #17](https://github.com/acmiyaguchi/fen-web/issues/17); see
+  [../runtime/boot.md](../runtime/boot.md)'s cjson stub section for the
+  fen-web-side hazard this mirrors.
 
 See also: [fennel-first.md](fennel-first.md),
 [../runtime/module-loading.md](../runtime/module-loading.md).

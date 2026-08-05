@@ -46,21 +46,34 @@ extension points get filled without touching `fen/`.
   - [fetch.md](bindings/fetch.md) — `host.fetch` + fetch backend
   - [kv.md](bindings/kv.md) — `host.kv`
 - **platform/** — Fennel-side shims and registrations over the host primitives.
-  - [shims.md](platform/shims.md) — issue #15
+  - [shims.md](platform/shims.md) — issue #15, host IO profiles (#22)
   - [tools.md](platform/tools.md) — issue #4
   - [sessions.md](platform/sessions.md) — issue #14
 - **apps/** — the two delivery shapes.
   - [demo.md](apps/demo.md) — issues #6-#9
   - [extension.md](apps/extension.md) — deferred, fen#100 / issue #11
+- **[integration.md](integration.md)** — the #5 milestone test and the
+  opt-in live Codex e2e harness (`packages/integration`).
 
 ## Status at a glance
 
-Phase 1 (bootstrap) is in progress. `packages/bindings` (fetch + kv
-primitives, issues #2/#3) and `packages/runtime` (wasmoon boot, issue #1)
-are implemented and landed on `main` at commit `02f4b1a`. Currently being
-implemented: the platform layer over those primitives — shims (#15),
-virtual-FS tools (#4), session backend (#14) — and CI (#12). Next up:
-issue #5, one headless agent turn against a stub provider, which is the
-phase-1 milestone these all feed. `apps/demo` (#6-#9) and `apps/extension`
-(#11) remain design-only. See the top-level [README.md](../README.md) for
+**Phase 1 (bootstrap) milestone is CLOSED** — all 9 phase-1 issues
+(#1-#5, #12-#15) are closed. `packages/bindings` (host.fetch/host.kv),
+`packages/runtime` (wasmoon boot), `packages/platform` (shims, browser
+file tools, kv session backend), and `packages/integration` (the #5
+headless-turn milestone test) are all implemented and on `main`. CI is
+green (build + Fennel/Busted tests through the Nix flake, #12), and live
+provider validation against real OpenAI Codex has been run via the opt-in
+`e2e:codex` harness (never in CI) — see [integration.md](integration.md).
+
+Open follow-ups from phase-1 review, not blocking: cjson-null truthiness
+in the OpenAI adapter's stream loop (#17, upstream fen#482), first-class
+wasmoon file mounts for Node hosts (#18), a persisted chunk cache for
+page-load compile cost (#19), cooperative-retry busy-spin backpressure
+(#20), `require`/pump reentrancy (#21), and formalizing the two host IO
+profiles (#22, see [platform/shims.md](platform/shims.md)).
+
+Not yet started: `apps/demo` (#6-#9, BYO-key single-page shell, iframe
+preview, DOM presenter) and `apps/extension` (#11, deferred, trails the
+demo) remain design-only. See the top-level [README.md](../README.md) for
 the architecture summary and layout.

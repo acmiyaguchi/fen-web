@@ -45,7 +45,13 @@ in-page). Stubs needed for cold load: `cjson`, `fen.util.process` only.
    Detail: [reload.md](reload.md).
 4. Only ~10% of full-tree reload's cost is amortizable without a
    compiler-level cache — see the chunk-cache follow-up in
-   [reload.md](reload.md).
+   [reload.md](reload.md), tracked as
+   [issue #19](https://github.com/acmiyaguchi/fen-web/issues/19) (never
+   filed until this pass): persist compiled chunks in `host.kv` keyed on
+   `(fennel-version, source-fingerprint)` to cut every page load's ~1.7s
+   cold-compile cost. Not yet implemented — `createFenRuntime`
+   ([boot.md](boot.md)) always compiles in-VM today, with nothing
+   persisted across boots.
 
 ## Why hybrid, not pure-precompiled or pure-in-VM
 
