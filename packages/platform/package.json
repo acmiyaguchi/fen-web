@@ -1,0 +1,9 @@
+{
+  "name": "@fen-web/platform",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "test": "npm run test:fnl",
+    "test:fnl": "cd ../.. && nix develop -c busted --loaders=lua,fennel --helper=packages/platform/tests/helper.lua --pattern=_test packages/platform/tests"
+  }
+}
