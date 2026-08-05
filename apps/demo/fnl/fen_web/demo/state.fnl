@@ -49,7 +49,7 @@
 ;; @doc fen_web.demo.state.select
 ;; kind: data
 ;; signature: table|nil
-;; summary: Active DOM select prompt ({id label choices result done?}) awaited cooperatively by api.ui.select, or nil when none is open.
+;; summary: Active DOM select prompt ({label choices result done?}) awaited cooperatively by api.ui.select, or nil when none is open.
 ;; tags: demo presenter state select ui
 
 ;; @doc fen_web.demo.state.prompt
@@ -57,12 +57,6 @@
 ;; signature: table|nil
 ;; summary: Active DOM text prompt ({label result done?}) awaited cooperatively by api.ui.prompt, or nil when none is open.
 ;; tags: demo presenter state prompt ui
-
-;; @doc fen_web.demo.state.overlay-seq
-;; kind: data
-;; signature: number
-;; summary: Monotonic id counter distinguishing successive prompt/select overlays so drained events match the current one.
-;; tags: demo presenter state overlay ui
 
 {:api nil
  :presenter-ctx nil
@@ -84,5 +78,4 @@
                :spin-frame 0}
  :dom {:built? false :nodes {} :children {}}
  :select nil
- :prompt nil
- :overlay-seq 0}
+ :prompt nil}

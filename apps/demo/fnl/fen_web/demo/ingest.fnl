@@ -1,13 +1,14 @@
 ;; Bus -> DOM-presenter transcript/status ingestion (fen-web#6).
 ;;
 ;; This is the DOM presenter's fold of `api.on :*` events into transcript
-;; rows and a status model, with streaming-delta merge. It reimplements the
-;; in-tree web presenter's ingest.fnl (fen/extensions/adapters/presenters/
-;; web/ingest.fnl) over the fen-web state module rather than sharing it: the
-;; web presenter lives in the pinned fen submodule and is terminal/SSE
-;; shaped, and fen-web#99's design finding called this fold "nearly exactly
-;; what the DOM presenter reimplements." Rendering is host.dom-apply's job
-;; (see dom.fnl); this module only mutates state.
+;; rows and a status model, with streaming-delta merge. It is a
+;; near-verbatim fork of the in-tree web presenter's ingest.fnl
+;; (fen/extensions/adapters/presenters/web/ingest.fnl) re-homed onto the
+;; fen-web state module rather than shared. The fold is presenter-neutral --
+;; it is NOT terminal/SSE shaped and only mutates state; rendering is
+;; host.dom-apply's job (see dom.fnl). It is duplicated here because that
+;; presenter lives in the pinned fen submodule; upstreaming a shared
+;; presenter-neutral ingest into fen is tracked as fen-web#24 (see PR #23).
 
 (local state (require :fen_web.demo.state))
 (local json (require :fen.util.json))

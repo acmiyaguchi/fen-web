@@ -6,7 +6,11 @@
 ;; against a committed model kept in state.dom, and emits only the create/
 ;; text/class/remove mutations that changed, as ONE batched host.dom-apply
 ;; call. That committed model lives in the reload-excluded state module, so
-;; /reload swaps this behavior module without re-creating live DOM nodes.
+;; the presenter is structured for /reload to swap this behavior module
+;; without re-creating live DOM nodes. That reload-ready split is verified
+;; structurally (the diff and overlay state survive a re-require); an
+;; end-to-end /reload cycle is not yet exercised by a test, pending
+;; fen-web#19.
 ;;
 ;; User input never calls back into Lua (that would resume the agent
 ;; coroutine across a C-call boundary; see docs/bindings/host-protocol.md).
@@ -298,9 +302,7 @@
                          ": DOM select needs an active turn; returning nil")})
             nil)
         (do
-          (set state.overlay-seq (+ state.overlay-seq 1))
-          (set state.select {:id state.overlay-seq
-                             :label (tostring (or opts.label "select"))
+          (set state.select {:label (tostring (or opts.label "select"))
                              :choices (or opts.choices [])
                              :result nil :done? false})
           (open-overlay! (select-children state.select))
@@ -326,9 +328,7 @@
                          ": DOM prompt needs an active turn; returning nil")})
             nil)
         (do
-          (set state.overlay-seq (+ state.overlay-seq 1))
-          (set state.prompt {:id state.overlay-seq
-                             :label (tostring (or opts.label "prompt"))
+          (set state.prompt {:label (tostring (or opts.label "prompt"))
                              :result nil :done? false})
           (open-overlay! (prompt-children state.prompt))
           (set-input-disabled! true)

@@ -59,9 +59,11 @@ export interface DomEvent {
   id: string;
   /** DOM event type ("submit", "click", ...). */
   event: string;
-  /** The listened element's current `value` at dispatch time, or "" if it
-   * has none. Lets the presenter read an input's text without a separate
-   * query round-trip on submit. */
+  /** The dispatch-time `value` of the element the listener is attached to,
+   * or "" when it has none. Note a `<form>` submit reports "" here (the
+   * form element itself has no `value`), so the presenter reads an input's
+   * text with an explicit `get` op rather than relying on this field for
+   * submit events. */
   value: string;
 }
 

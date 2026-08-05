@@ -6,7 +6,17 @@
 ;; The fake maintains a real element tree so specs can assert the DOM the
 ;; fragment diff produced, and exposes `emit` to simulate user input events
 ;; the presenter drains with `drain-events`.
-
+;;
+;; TEST-ONLY MIRROR of the op dispatcher in
+;; packages/bindings/src/dom/applyOps.ts. The Busted harness has no TS
+;; runtime, so the real dispatcher cannot be reused here; this fake must be
+;; kept semantically aligned with applyOps by hand. Notably it must match:
+;;   - create idempotency: create is a no-op on an existing id, then still
+;;     applies any optional inline text/class (initial-set doubling);
+;;   - `before` semantics: insert before the named sibling, else append;
+;;   - get: absent/nil property normalizes to "" (never nil back to Lua);
+;;   - mutation ops target an existing element (error otherwise).
+;; When applyOps.ts changes op semantics, update this fake in lockstep.
 (local state (require :fen_web.demo.state))
 
 (local M {})
@@ -130,7 +140,6 @@
                           :turn-start 0 :spin-frame 0})
   (set state.dom {:built? false :nodes {} :children {}})
   (set state.select nil)
-  (set state.prompt nil)
-  (set state.overlay-seq 0))
+  (set state.prompt nil))
 
 M

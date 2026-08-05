@@ -7,7 +7,9 @@
 ;; the in-tree TUI/web presenters. layout.fnl turns that state into a
 ;; structured fragment and dom.fnl diffs it into one batched mutation list
 ;; per frame. Persistent state lives in the reload-excluded state module so
-;; /reload swaps behavior in-page without losing the transcript or DOM.
+;; the presenter is structured for /reload to swap behavior in-page without
+;; losing the transcript or DOM. A full /reload cycle is not yet covered by
+;; a test (pending fen-web#19); the split is verified only structurally.
 
 (local state (require :fen_web.demo.state))
 (local ingest (require :fen_web.demo.ingest))
