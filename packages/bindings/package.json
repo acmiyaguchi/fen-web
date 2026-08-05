@@ -1,0 +1,20 @@
+{
+  "name": "@fen-web/bindings",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
+    "test:fnl": "cd ../.. && nix develop -c busted --loaders=lua,fennel --helper=packages/bindings/tests/helper.lua --pattern=_test packages/bindings/tests"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^22.9.0"
+  }
+}
