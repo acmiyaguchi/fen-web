@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
+    "e2e:codex": "tsc -p tsconfig.json && node dist/e2e-codex.mjs"
   },
   "dependencies": {
     "@fen-web/runtime": "*",
