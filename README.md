@@ -1,5 +1,7 @@
 # fen-web
 
+[![CI](https://github.com/acmiyaguchi/fen-web/actions/workflows/ci.yml/badge.svg)](https://github.com/acmiyaguchi/fen-web/actions/workflows/ci.yml)
+
 Browser-resident form of [fen](https://github.com/acmiyaguchi/fen): a Fennel→Lua coding agent running in-page via wasmoon (Lua 5.4 in WASM).
 Tracks [fen#99](https://github.com/acmiyaguchi/fen/issues/99).
 
