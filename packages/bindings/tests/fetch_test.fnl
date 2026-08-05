@@ -133,6 +133,34 @@
                             :anthropic-dangerous-direct-browser-access))
           (set _G.__fen_host nil))))
 
+    (it "does not add the anthropic header for lookalike or non-https hosts"
+      (fn []
+        (let [fetch (require :fen.util.http.backends.fetch)]
+          (each [_ url (ipairs ["https://api.anthropic.com.attacker.example/v1/messages"
+                                "http://api.anthropic.com/v1/messages"
+                                "https://evil.api.anthropic.com/v1/messages"])]
+            (let [host (make-fake-host [{:chunks [] :done true :status 200
+                                        :headers {} :body ""}])]
+              (set _G.__fen_host host)
+              (fetch.request {:method "POST" :url url :headers {} :yield (fn [])})
+              (assert.is_nil (. host._state.start-opts.headers
+                                :anthropic-dangerous-direct-browser-access))
+              (set _G.__fen_host nil))))))
+
+    (it "adds the anthropic header for the bare host and an explicit port"
+      (fn []
+        (let [fetch (require :fen.util.http.backends.fetch)]
+          (each [_ url (ipairs ["https://api.anthropic.com"
+                                "https://api.anthropic.com:443/v1/messages"])]
+            (let [host (make-fake-host [{:chunks [] :done true :status 200
+                                        :headers {} :body ""}])]
+              (set _G.__fen_host host)
+              (fetch.request {:method "POST" :url url :headers {} :yield (fn [])})
+              (assert.are.equal "true"
+                (. host._state.start-opts.headers
+                   :anthropic-dangerous-direct-browser-access))
+              (set _G.__fen_host nil))))))
+
     (it "surfaces {:error} without a status when the host reports one"
       (fn []
         (let [fetch (require :fen.util.http.backends.fetch)

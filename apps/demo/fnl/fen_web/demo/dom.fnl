@@ -20,6 +20,7 @@
 (local state (require :fen_web.demo.state))
 (local layout (require :fen_web.demo.layout))
 (local ingest (require :fen_web.demo.ingest))
+(local trim (. (require :fen.util.text) :trim))
 
 (local M {})
 
@@ -41,10 +42,6 @@
 
 (fn style-class [style]
   (.. "style-" (class-token style)))
-
-(fn string-trim [s]
-  (let [(out _) (string.gsub (tostring (or s "")) "^%s*(.-)%s*$" "%1")]
-    out))
 
 ;; --- committed-model bookkeeping ------------------------------------------
 
@@ -243,7 +240,7 @@
           (and (= id "fen-inputbar") (= etype :submit)
                (not state.prompt) (not state.select))
           (let [text (input-value :fen-input)]
-            (when (not= (string-trim text) "")
+            (when (not= (trim text) "")
               (host-apply [{:op :prop :id :fen-input :name :value :value ""}])
               (ctx.on-submit text)))))))
 

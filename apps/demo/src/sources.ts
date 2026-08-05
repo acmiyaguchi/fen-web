@@ -27,6 +27,19 @@ const utilGlob = import.meta.glob("../../../fen/packages/util/src/**/*.{fnl,lua}
   eager: true,
 }) as RawGlob;
 
+/**
+ * fen's `fen.*` process-lifecycle package: the demo reuses its run_state,
+ * turn_submit, turn_lifecycle, and session_lifecycle modules rather than
+ * re-implementing the interactive turn/tick loop (see fen_web.demo.boot).
+ * Only the modules actually required load; the CLI entry (main.fnl) etc.
+ * stay dormant in the source map.
+ */
+const fenGlob = import.meta.glob("../../../fen/packages/fen/src/**/*.{fnl,lua}", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as RawGlob;
+
 /** fen-web platform Fennel (fen_web.* shims, tools, sessions). */
 const platformGlob = import.meta.glob("../../../packages/platform/fnl/**/*.fnl", {
   query: "?raw",
@@ -100,6 +113,7 @@ export function buildDemoSources(): Map<string, FenSource> {
   const map = new Map<string, FenSource>();
   addTree(map, coreGlob, "fen/packages/core/src/");
   addTree(map, utilGlob, "fen/packages/util/src/");
+  addTree(map, fenGlob, "fen/packages/fen/src/");
   addTree(map, platformGlob, "packages/platform/fnl/");
   addTree(map, demoGlob, "/fnl/");
   addFlatPackage(map, anthropicGlob, "fen.extensions.provider_anthropic");

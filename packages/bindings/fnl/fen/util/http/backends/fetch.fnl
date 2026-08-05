@@ -17,10 +17,12 @@
 ;; property of *this* transport (the native libcurl backend never needs
 ;; it) and (b) fen's anthropic provider exposes no extra-header seam to set
 ;; it from the provider layer. This is interim: the durable fix is a
-;; provider extra-headers / browser-direct option upstream in fen (filed as
-;; an upstream ask, per docs/architecture/seams.md's "widen the seam in
-;; fen" rule); once that lands, this moves to the provider spec and this
-;; host-keyed special-case is deleted.
+;; provider extra-headers / browser-direct option upstream in fen, filed as
+;; the upstream ask acmiyaguchi/fen#492 per docs/architecture/seams.md's
+;; "widen the seam in fen" rule; once that lands, this moves to the provider
+;; spec and this host-keyed special-case is deleted. The host match is exact
+;; (see anthropic-host? below), so a lookalike host like
+;; https://api.anthropic.com.attacker.example never receives the header.
 ;;
 ;; Install by pre-setting package.loaded["fen.util.http.backend"] from the
 ;; runtime bootstrap (same mechanism fen.testing.stub-http! uses), not by
@@ -78,8 +80,15 @@
 ;; never overwrites a header the caller already set.
 (local ANTHROPIC-DIRECT-HEADER :anthropic-dangerous-direct-browser-access)
 
+;; Exact host match: only https (never plain http), only the literal host
+;; api.anthropic.com, and the character after ".com" must be a real URL
+;; boundary (`/`, `:`, `?`, `#`) or end-of-string. This rejects both
+;; http://api.anthropic.com and suffix lookalikes such as
+;; https://api.anthropic.com.attacker.example.
 (fn anthropic-host? [url]
-  (not= nil (string.find (tostring (or url "")) "^https?://api%.anthropic%.com")))
+  (let [u (tostring (or url ""))]
+    (or (= u "https://api.anthropic.com")
+        (not= nil (string.find u "^https://api%.anthropic%.com[/:?#]")))))
 
 (fn transport-headers [opts]
   (let [headers {}]

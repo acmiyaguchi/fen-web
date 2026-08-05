@@ -35,13 +35,28 @@ see the top-level [README.md](../../README.md) non-goals.
   turn loop inside the runtime coroutine pump; the register/agent/turn
   orchestration itself lives in Fennel
   (`apps/demo/fnl/fen_web/demo/boot.fnl`, the browser analog of fen's
-  `fen.interactive.run!`, the way `turnScript.fnl` mirrors the headless
-  turn). BYO API keys are entered in the shell's settings gate
+  `fen.interactive.run!`). Rather than re-implement the interactive
+  turn/tick loop, `boot.fnl` reuses fen's own lifecycle modules —
+  `fen.run_state`, `fen.turn_submit`, `fen.turn_lifecycle`, and
+  `fen.session_lifecycle` (make-flush/`:message-appended` install/close) —
+  so the canonical `:runtime-tick`/`:agent-started`/`:agent-turn-complete`/
+  `:agent-shutdown` events reach extensions exactly as they do under the
+  TUI. The tool and DOM-presenter extensions load through their manifests
+  via the extension loader's public api factory + manifest reader
+  (`load-extension!`), so `reload-modules`/`reload-exclude` and owner
+  cleanup are real; the full CLI loader can't run in-VM (its compiler dep
+  pulls `fen.runtime`), and an end-to-end in-page `/reload` is tracked as
+  fen-web#19. BYO API keys are entered in the shell's settings gate
   (`src/settings.ts`) and stored in IndexedDB under `env/apikey/<VAR>` —
   the exact path the `fs_kv` shim maps `os.getenv` to
-  ([../platform/shims.md](../platform/shims.md)) — so the key never leaves
-  the browser (sent only in the provider request's auth header, directly
-  to the provider API; no key proxy). Provider order: Anthropic is wired
+  ([../platform/shims.md](../platform/shims.md)). The key is resolved
+  in-VM via `os.getenv("<VAR>")` from the provider's `:api-key-var` (not
+  marshalled through a JS global), so it never leaves the browser (sent
+  only in the provider request's auth header, directly to the provider
+  API; no key proxy). Changing or forgetting the key cooperatively stops
+  the running VM (`DemoSession.stop`) before erasing/replacing storage, so
+  the old key snapshot is actually revoked. Only `"anthropic"` is accepted
+  today; other providers are rejected up front rather than silently routed. Provider order: Anthropic is wired
   first because `api.anthropic.com` accepts direct-from-page calls (the
   fetch backend adds the required `anthropic-dangerous-direct-browser-access`
   header for that host, see [../bindings/fetch.md](../bindings/fetch.md));

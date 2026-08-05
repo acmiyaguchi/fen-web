@@ -3,44 +3,61 @@ import {
   type FenRuntime,
   type FenSource,
 } from "@fen-web/runtime";
-import {
-  IndexedDbKv,
-  SyncKvCache,
-  WebHostDomApply,
-  WebHostFetch,
-  FetchPoller,
-  normalizeOps,
-  type DomOp,
-} from "@fen-web/bindings";
-import { buildDemoSources } from "./sources.js";
+import { FetchPoller, normalizeOps, type DomOp, type HostFetch } from "@fen-web/bindings";
 
-// Vendored VM sources bundled as raw text (the runtime's Node fs readers
-// don't run in-page — see docs/runtime/boot.md's browser note).
-import fennelSource from "../../../packages/runtime/vendor/fennel-1.6.0.lua?raw";
-import cjsonStubSource from "../../../packages/runtime/vendor/cjson_stub.lua?raw";
-// The fen-web fetch backend, installed by pre-setting package.loaded the same
-// way fen.testing.stub-http! and packages/integration do.
-import fetchBackendSource from "../../../packages/bindings/fnl/fen/util/http/backends/fetch.fnl?raw";
+// The runtime/host wiring for the demo, deliberately kept free of any
+// browser-only (`?raw` import, IndexedDB, real DOM/fetch) coupling so this
+// exact code path is exercised by src/bootTurn.test.ts as well as the page.
+// The browser-specific assembly (bundled VM sources, IndexedDB kv, real
+// DOM/fetch) lives in browserBoot.ts, which supplies the deps below.
 
 export interface DemoBootOptions {
-  /** Anthropic API key. Read from IndexedDB by the settings layer; passed
-   * straight to the agent and, from there, only to api.anthropic.com. */
-  apiKey: string;
-  /** Provider id (only "anthropic" wired today; see docs/apps/demo.md). */
+  /** Provider id — only "anthropic" is wired today (see docs/apps/demo.md).
+   * Anything else is rejected up front rather than silently routed to
+   * Anthropic. The API key is NOT passed here: it is resolved in-VM via
+   * `os.getenv("<VAR>")` → kv path `env/apikey/<VAR>` (docs/platform/shims.md),
+   * the same credential seam the desktop provider uses. */
   provider?: string;
   /** Model id; defaults to the provider's default when omitted. */
   model?: string;
   /** Virtual-FS working directory the agent operates in. */
   cwd?: string;
-  /** IndexedDB database name (kept overridable for tests). */
-  dbName?: string;
+}
+
+/** Host primitives + bundled VM sources bootDemo needs, injected so the
+ * browser page and the node test can each supply their own (real vs fake). */
+export interface DemoRuntimeDeps {
+  /** `createFenRuntime` source map (bundle glob in the browser, fs walk in tests). */
+  sources: Map<string, FenSource>;
+  /** fen-web fetch backend Fennel source, compiled in-VM and pre-set as
+   * `package.loaded["fen.util.http.backend"]`. */
+  fetchBackendSource: string;
+  /** Synchronous kv view over the store (SyncKvCache in the browser, a
+   * table-backed stub in tests). The API key must already be present under
+   * `env/apikey/<VAR>` before boot. */
+  kv: unknown;
+  /** DOM sink: WebHostDomApply in the browser, FakeDom in tests. */
+  dom: { apply(ops: DomOp[]): unknown };
+  /** HostFetch transport: WebHostFetch in the browser, ScriptedFetch in tests. */
+  fetch: HostFetch;
+  /** Vendored Fennel source (required in the browser; omit in node, which
+   * loads it from the runtime package). */
+  fennelSource?: string;
+  /** cjson preload source (required in the browser; omit in node). */
+  cjsonSource?: string;
+  /** Await pending kv write-backs (SyncKvCache.flush); optional in tests. */
+  flush?: () => Promise<void>;
+  /** Frame scheduler; defaults to rAF (browser) / setTimeout (off-DOM). */
+  schedule?: (fn: () => void) => void;
 }
 
 export interface DemoSession {
   /** Await pending kv write-backs (session persistence durability). */
   flush(): Promise<void>;
-  /** Tear down the run loop and close the VM. */
-  stop(): void;
+  /** Cooperatively tear down: ask the presenter run loop to quit at the next
+   * frame so presenter shutdown, session close, and the :agent-shutdown
+   * lifecycle event all run, then close the VM. Resolves once torn down. */
+  stop(): Promise<void>;
 }
 
 /** Pre-set package.loaded["fen.util.http.backend"] to the bundled fen-web
@@ -57,80 +74,117 @@ async function installFetchBackend(rt: FenRuntime, src: string): Promise<void> {
 }
 
 /**
- * Boot the wasmoon VM, wire the host primitives (kv/dom/fetch), and drive
- * the demo presenter's turn loop (fen_web.demo.boot/run) inside the runtime
- * coroutine pump. This is the "install __fen_host.dom_apply and boot the
- * runtime + demo presenter end to end" wiring deferred from #6's PR to #7.
+ * Boot the VM, wire the host primitives (kv/dom/fetch), and drive the demo
+ * presenter's turn loop (fen_web.demo.boot/run) inside the runtime coroutine
+ * pump. Credential resolution happens in-VM against `deps.kv`; only
+ * cwd/provider/model are staged to Lua (no plaintext key in a JS global).
  */
 export async function bootDemo(
   opts: DemoBootOptions,
-  sources: Map<string, FenSource> = buildDemoSources(),
+  deps: DemoRuntimeDeps,
 ): Promise<DemoSession> {
-  const kvBacking = new IndexedDbKv(opts.dbName ?? "fen-web-demo");
-  // fen's kv-backed seams (sessions, fs_kv) call kv synchronously; mirror
-  // the store into a synchronous cache at boot (see SyncKvCache).
-  const kv = await SyncKvCache.load(kvBacking);
+  const provider = opts.provider ?? "anthropic";
+  if (provider !== "anthropic") {
+    throw new Error(
+      `fen-web demo: unsupported provider "${provider}"; only "anthropic" is wired today`,
+    );
+  }
 
-  const dom = new WebHostDomApply();
-  const poller = new FetchPoller(new WebHostFetch());
+  const poller = new FetchPoller(deps.fetch);
 
   const rt = await createFenRuntime({
-    sources,
-    fennelSource,
-    preload: { cjson: cjsonStubSource },
+    sources: deps.sources,
+    ...(deps.fennelSource ? { fennelSource: deps.fennelSource } : {}),
+    ...(deps.cjsonSource ? { preload: { cjson: deps.cjsonSource } } : {}),
     host: {
-      kv,
-      dom_apply: (ops: unknown) => dom.apply(normalizeOps(ops as DomOp[])),
+      kv: deps.kv,
+      dom_apply: (ops: unknown) => deps.dom.apply(normalizeOps(ops as DomOp[])),
       fetch_start: (fetchOpts: unknown) => poller.start(fetchOpts as never),
       fetch_poll: (id: number) => poller.poll(id),
       fetch_dispose: (id: number) => poller.dispose(id),
     },
   });
 
-  await installFetchBackend(rt, fetchBackendSource);
+  await installFetchBackend(rt, deps.fetchBackendSource);
 
   rt.lua.global.set("__demo_opts", {
     cwd: opts.cwd ?? "/workspace",
-    provider: opts.provider ?? "anthropic",
+    provider,
     model: opts.model,
-    "api-key": opts.apiKey,
   });
 
   const pump = await rt.createCoroutinePump(
     `function() return (require "fen_web.demo.boot").run(__demo_opts) end`,
   );
 
-  let stopped = false;
+  const schedule =
+    deps.schedule ??
+    (typeof requestAnimationFrame === "function"
+      ? (fn: () => void) => requestAnimationFrame(fn)
+      : (fn: () => void) => setTimeout(fn, 16));
+
+  let closed = false;
+  let stopResolve: (() => void) | undefined;
+  const finish = () => {
+    if (closed) return;
+    closed = true;
+    try {
+      rt.close();
+    } finally {
+      stopResolve?.();
+    }
+  };
+
   // Drive the presenter loop one resume per animation frame: each pump()
   // runs one presenter frame (drain input, tick any in-flight turn, render
   // the diff, yield). rAF paces to the display and pauses on a hidden tab;
   // the JS event loop runs between frames so pending host.fetch promises
-  // (and kv write-backs) make progress. Falls back to setTimeout off-DOM.
-  const schedule =
-    typeof requestAnimationFrame === "function"
-      ? (fn: () => void) => requestAnimationFrame(fn)
-      : (fn: () => void) => setTimeout(fn, 16);
-
+  // (and kv write-backs) make progress. When the run loop returns (normal
+  // completion or a cooperative stop's quit), the coroutine goes "dead" and
+  // we close the VM.
   const step = async () => {
-    if (stopped) return;
+    if (closed) return;
     let status: string;
     try {
       status = await pump.pump();
     } catch (err) {
-      // A presenter/turn crash shouldn't silently freeze the page.
       console.error("fen-web demo: run loop crashed", err);
-      stopped = true;
+      finish();
       return;
     }
-    if (status === "suspended" && !stopped) schedule(() => void step());
+    if (status === "suspended") {
+      if (!closed) schedule(() => void step());
+      return;
+    }
+    finish();
   };
   void step();
 
   return {
-    flush: () => kv.flush(),
-    stop: () => {
-      stopped = true;
-      rt.close();
-    },
+    flush: () => deps.flush?.() ?? Promise.resolve(),
+    stop: () =>
+      new Promise<void>((resolve) => {
+        if (closed) {
+          resolve();
+          return;
+        }
+        stopResolve = resolve;
+        // Ask the presenter run loop to quit cooperatively; the scheduled
+        // step() loop then drains one more frame, the loop exits, boot.run
+        // runs teardown, the coroutine dies, and finish() closes the VM.
+        try {
+          const requestStop = rt.lua.global.get("__fen_demo_request_stop") as unknown;
+          if (typeof requestStop === "function") {
+            (requestStop as () => void)();
+          } else {
+            // No cooperative hook (booted but not yet in the run loop):
+            // fall back to a hard close so stop() still resolves.
+            finish();
+          }
+        } catch (err) {
+          console.error("fen-web demo: cooperative stop failed", err);
+          finish();
+        }
+      }),
   };
 }

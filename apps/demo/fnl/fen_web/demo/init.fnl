@@ -58,8 +58,10 @@
   (var alive? true)
   (while (and alive? (not state.quit?))
     (dom.pump-input! ctx)
-    (when (and ctx.is-busy? (ctx.is-busy?) ctx.on-tick)
-      (pcall ctx.on-tick))
+    ;; Tick every frame (not only while busy) so the canonical :runtime-tick
+    ;; event fires each idle frame too, matching fen.interactive's on-tick
+    ;; contract; on-tick itself only resumes a turn when one is in flight.
+    (when ctx.on-tick (pcall ctx.on-tick))
     (dom.render-frame! ctx)
     ;; The browser boot drives run inside a coroutine pump (docs/runtime/
     ;; boot.md); yielding hands the frame to the JS event loop so pending
@@ -87,10 +89,24 @@
   (set state.quit? true)
   (set state.presenter-ctx nil))
 
+;; Lifecycle/plumbing bus events with no transcript representation in this
+;; presenter, mirroring fen's TUI PRESENTER-CONTROL-EVENTS: they either have
+;; dedicated handling (status/redraw) or are pure lifecycle signals for
+;; extensions. :set-status-info is deliberately NOT here because this
+;; presenter's ingest folds it into the status model. :agent-started/
+;; :agent-shutdown/:agent-turn-complete/:runtime-tick/:message-appended are
+;; the canonical fen.interactive turn lifecycle events; the demo emits them
+;; for extension parity but they are not user-facing transcript rows.
 (local PRESENTER-CONTROL-EVENTS
   {:dismiss true
    :reinit-presenter true
-   :redraw true})
+   :redraw true
+   :runtime-tick true
+   :agent-started true
+   :agent-turn-complete true
+   :agent-shutdown true
+   :message-appended true
+   :model-catalog-updated true})
 
 (fn M.register [api]
   (set state.api api)

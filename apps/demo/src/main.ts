@@ -1,5 +1,5 @@
 import { PROVIDERS, SettingsStore, providerById } from "./settings.js";
-import { bootDemo, type DemoSession } from "./boot.js";
+import { bootDemoInBrowser, type DemoSession } from "./browserBoot.js";
 
 // The single-page shell's chrome: a BYO-key settings gate plus the
 // `#fen-app` mount the Fennel DOM presenter renders into. Everything the
@@ -28,13 +28,55 @@ async function main(): Promise<void> {
     throw new Error("fen-web demo: shell markup is missing required elements");
   }
 
+  // Single source of truth for the running agent VM and its boot lifecycle.
+  // A single-flight `booting` promise makes double-submit, submit-racing-
+  // auto-start, and re-entrant boots all await the same VM instead of
+  // spawning competing VMs/presenter loops against the same DOM + database.
   let session: DemoSession | undefined;
+  let booting: Promise<DemoSession> | undefined;
   const selectedProvider = await store.getSelectedProvider();
+
+  const showFatal = (err: unknown): void => {
+    console.error("fen-web demo failed to start", err);
+    settingsRoot.classList.remove("hidden");
+    settingsRoot.replaceChildren();
+    settingsRoot.append(
+      el("p", { class: "settings-notice" }, `Failed to start: ${String(err)}`),
+    );
+  };
+
+  // Boot exactly one VM. The key is already persisted to IndexedDB by the
+  // caller; bootDemoInBrowser reads it from there (env/apikey/<VAR>) and
+  // resolves it in-VM — no key is passed through here.
+  const startSession = async (providerId: string): Promise<void> => {
+    if (session || booting) {
+      await booting;
+      return;
+    }
+    booting = bootDemoInBrowser({ provider: providerId, dbName: DB_NAME });
+    try {
+      session = await booting;
+      settingsRoot.classList.add("hidden");
+    } finally {
+      booting = undefined;
+    }
+  };
+
+  // Stop and discard the running VM. Cooperative shutdown revokes the VM's
+  // in-memory key snapshot: after this, no further turns can send the old
+  // key, so "Forget key"/key-replacement actually take effect.
+  const stopSession = async (): Promise<void> => {
+    if (booting) await booting.catch(() => undefined);
+    const s = session;
+    session = undefined;
+    if (s) await s.stop();
+  };
 
   const renderSettings = async (): Promise<void> => {
     settingsRoot.replaceChildren();
     const provider = providerById(selectedProvider);
     const existing = (await store.getApiKey(provider.envVar)) ?? "";
+    const running = session !== undefined || booting !== undefined;
 
     const form = el("form", { class: "settings-form", id: "settings-form" });
     form.append(el("h1", {}, "fen-web demo"));
@@ -71,37 +113,74 @@ async function main(): Promise<void> {
     );
     form.append(notice);
 
+    if (running) {
+      form.append(
+        el(
+          "p",
+          { class: "settings-notice" },
+          "An agent session is running with the current key. Saving a new " +
+            "key or forgetting the key will stop it and revoke that key.",
+        ),
+      );
+    }
+
     const actions = el("div", { class: "settings-actions" });
-    const save = el("button", { type: "submit", class: "settings-save" }, "Save & start");
+    const save = el(
+      "button",
+      { type: "submit", class: "settings-save" },
+      running ? "Save & restart" : "Save & start",
+    );
     actions.append(save);
     if (existing) {
       const clear = el("button", { type: "button", class: "settings-clear" }, "Forget key");
-      clear.addEventListener("click", async () => {
-        await store.clearApiKey(provider.envVar);
-        input.value = "";
+      clear.addEventListener("click", () => {
+        void (async () => {
+          try {
+            // Revoke first (stop the running VM), then erase storage, so a
+            // turn can't slip in between clearing and shutdown.
+            await stopSession();
+            await store.clearApiKey(provider.envVar);
+            input.value = "";
+            await renderSettings();
+          } catch (err) {
+            showFatal(err);
+          }
+        })();
       });
       actions.append(clear);
     }
     form.append(actions);
 
-    select.addEventListener("change", async () => {
-      await store.setSelectedProvider(select.value);
-      location.reload();
+    select.addEventListener("change", () => {
+      void (async () => {
+        await store.setSelectedProvider(select.value);
+        location.reload();
+      })();
     });
 
-    form.addEventListener("submit", async (ev) => {
+    form.addEventListener("submit", (ev) => {
       ev.preventDefault();
-      const key = input.value.trim();
-      if (!key) {
-        notice.textContent = "Enter an API key to start.";
-        return;
-      }
-      await store.setApiKey(provider.envVar, key);
-      await store.setSelectedProvider(provider.id);
-      settingsRoot.classList.add("hidden");
-      if (!session) {
-        session = await bootDemo({ apiKey: key, provider: provider.id, dbName: DB_NAME });
-      }
+      void (async () => {
+        const key = input.value.trim();
+        if (!key) {
+          notice.textContent = "Enter an API key to start.";
+          return;
+        }
+        if (booting) return; // a boot is already in flight; ignore re-submit
+        save.setAttribute("disabled", "disabled");
+        try {
+          await store.setApiKey(provider.envVar, key);
+          await store.setSelectedProvider(provider.id);
+          // Replacing the key must revoke the old VM before a new one boots
+          // with the new key snapshot.
+          await stopSession();
+          await startSession(provider.id);
+        } catch (err) {
+          showFatal(err);
+        } finally {
+          save.removeAttribute("disabled");
+        }
+      })();
     });
 
     settingsRoot.append(form);
@@ -119,8 +198,7 @@ async function main(): Promise<void> {
   const provider = providerById(selectedProvider);
   const existing = await store.getApiKey(provider.envVar);
   if (existing) {
-    settingsRoot.classList.add("hidden");
-    session = await bootDemo({ apiKey: existing, provider: provider.id, dbName: DB_NAME });
+    await startSession(provider.id);
   }
 
   // Persist session write-backs on unload (best-effort durability).
