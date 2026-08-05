@@ -16,13 +16,16 @@
 ;; io.popen, which has no browser equivalent and no vfs-backed
 ;; replacement is in scope for this issue.
 
+;; pick-values guards the tail entry: require returns a second value
+;; (the loader data) under two-value searchers like the runtime's
+;; source-map searcher, which would otherwise splice into the list.
 (local tool-specs
   [(require :fen_web.tools.read)
    (require :fen_web.tools.write)
    (require :fen_web.tools.edit)
    (require :fen_web.tools.grep)
    (require :fen_web.tools.find)
-   (require :fen_web.tools.ls)])
+   (pick-values 1 (require :fen_web.tools.ls))])
 
 (local M {})
 
