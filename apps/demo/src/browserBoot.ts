@@ -7,6 +7,7 @@ import {
 } from "@fen-web/bindings";
 import { bootDemo, type DemoBootOptions, type DemoSession } from "./boot.js";
 import { buildDemoSources } from "./sources.js";
+import { buildStarterFiles } from "./starter.js";
 
 // Vendored VM sources bundled as raw text (the runtime's Node fs readers
 // don't run in-page — see docs/runtime/boot.md's browser note). These
@@ -42,6 +43,7 @@ export async function bootDemoInBrowser(
 
   return bootDemo(opts, {
     sources: buildDemoSources(),
+    starterFiles: buildStarterFiles(),
     fetchBackendSource,
     fennelSource,
     cjsonSource: cjsonStubSource,

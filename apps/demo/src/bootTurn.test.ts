@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadFenTree, type FenSource } from "@fen-web/runtime";
@@ -73,6 +73,18 @@ function fetchBackendSource(): string {
     path.join(bindingsFnl, "fen", "util", "http", "backends", "fetch.fnl"),
     "utf8",
   );
+}
+
+/** Read the real starter files from disk (the browser bundles them via
+ * import.meta.glob in src/starter.ts; node reads them straight off the tree),
+ * keyed by absolute vfs path — the same shape bootDemo stages for the seeder. */
+function starterFilesFromDisk(): Record<string, string> {
+  const dir = path.resolve(here, "..", "starter");
+  const files: Record<string, string> = {};
+  for (const name of readdirSync(dir)) {
+    files[`/${name}`] = readFileSync(path.join(dir, name), "utf8");
+  }
+  return files;
 }
 
 /** A table-backed synchronous kv (the SyncKv contract) seeded with the API
@@ -160,6 +172,7 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
   const deps: DemoRuntimeDeps = {
     sources: buildSources(),
     fetchBackendSource: fetchBackendSource(),
+    starterFiles: starterFilesFromDisk(),
     kv,
     dom,
     preview: new FakePreview(),
@@ -172,6 +185,16 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
   // Wait for the presenter skeleton to build and the run loop to be live.
   await runUntil(() => dom.exists("fen-inputbar") && dom.exists("fen-input"));
   assert.ok(dom.exists("fen-inputbar"), "presenter skeleton should be built");
+
+  // First-load seeding (fen-web#9): boot wrote the curated starter todo app
+  // into the vfs ("fs:") keyspace, so the preview-driving loop is demoable in
+  // one click. Assert the entry + its same-tree assets landed.
+  assert.ok(
+    kv.store.get("fs:/index.html")?.includes("<title>Starter todo</title>"),
+    "first load should seed the starter index.html into the vfs",
+  );
+  assert.ok(kv.store.has("fs:/app.js"), "first load should seed app.js");
+  assert.ok(kv.store.has("fs:/styles.css"), "first load should seed styles.css");
 
   // Simulate a user submitting a prompt.
   dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "hi" } as DomOp]);

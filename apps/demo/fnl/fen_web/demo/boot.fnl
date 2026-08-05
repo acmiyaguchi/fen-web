@@ -35,6 +35,8 @@
 (local manifest-mod (require :fen.core.extensions.loader.manifest))
 (local register (require :fen.core.extensions.register))
 (local fs-kv (require :fen_web.shims.fs_kv))
+(local seed (require :fen_web.demo.seed))
+(local json (require :fen.util.json))
 (local sessions-init (require :fen_web.sessions))
 (local anthropic (require :fen.extensions.provider_anthropic.anthropic_messages))
 (local session-backend-registry
@@ -201,6 +203,15 @@
                  var-name ")")))
     key))
 
+;; @doc fen_web.demo.boot.starter-files
+;; kind: function
+;; signature: (starter-files) -> {string string}
+;; summary: Decode the first-load starter project boot.ts stages under _G.__fen_starter_files_json (vfs-path -> file contents) into a genuine Lua table for the seeder. A JS object set as a Lua global is a wasmoon proxy whose keys pairs cannot iterate, so the files travel as a JSON string (the same string delivery shape as the fetch-backend source); json.decode yields a real table. Returns an empty table when nothing was staged or decoding fails, so a missing bundle degrades to "boot empty" rather than crashing the turn.
+;; tags: demo boot seed starter json
+(fn M.starter-files []
+  (let [(ok? files) (pcall json.decode (or _G.__fen_starter_files_json "{}"))]
+    (if (and ok? (= (type files) :table)) files {})))
+
 ;; @doc fen_web.demo.boot.run
 ;; kind: function
 ;; signature: (run opts) -> nil
@@ -214,6 +225,13 @@
                  "'; only 'anthropic' is wired today (see docs/apps/demo.md)")))
     (let [kv (and _G.__fen_host _G.__fen_host.kv)
           _install (fs-kv.install! kv)
+          ;; First-load starter project (fen-web#9): seed a curated todo app
+          ;; into the vfs only when it is empty, so the preview-driving loop is
+          ;; demoable in one click and later loads never clobber user work.
+          ;; boot.ts stages the files as a JSON string; decode it to a genuine
+          ;; Lua table (a JS object global is a wasmoon proxy pairs can't walk)
+          ;; and seed through the ordinary vfs mechanism.
+          _seeded (seed.seed-if-empty! kv (M.starter-files))
           spec (anthropic-provider-spec)
           api-key (resolve-api-key spec)]
       ;; Register the compositional pieces against fen's real api. The tool

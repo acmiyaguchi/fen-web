@@ -1,0 +1,98 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1b1b1f;
+  --muted: #6b6b73;
+  --accent: #3a6df0;
+  --line: #e0e0e6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--fg);
+  background: #fafafc;
+}
+
+.app {
+  max-width: 30rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 1rem;
+}
+
+.new-todo {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.new-todo input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  font-size: 1rem;
+}
+
+.new-todo button {
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.todo-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.todo-list li.done .todo-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.todo-text {
+  flex: 1;
+}
+
+.todo-list button.delete {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.empty-state {
+  color: var(--muted);
+}
+
+.empty-state.hidden {
+  display: none;
+}
+
+.summary {
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}

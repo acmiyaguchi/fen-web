@@ -89,9 +89,25 @@ see the top-level [README.md](../../README.md) non-goals.
   `fen_web.demo.preview.manifest`) — the same path the file tools use, not
   an ad-hoc one. Like `host.fetch`, the RPC is asynchronous, so each tool
   starts/polls/yields the turn coroutine between polls rather than blocking.
-- **#9 — starter project.** A curated starter project seeded into
-  IndexedDB on first load (open question in fen#99: curated starter vs.
-  boot empty).
+- **#9 — starter project.** A curated starter todo app is seeded into the
+  IndexedDB-backed vfs on first load (open question in fen#99: curated
+  starter vs. boot empty — resolved in favor of seeding, so the
+  preview-driving loop is demoable in one click). The starter files are
+  real, reviewable source under `apps/demo/starter/` (`index.html` +
+  `app.js` + `styles.css`); the browser bundles them to raw text via
+  `import.meta.glob` (`src/starter.ts`) and `boot.ts` stages them into the
+  VM, the same delivery shape as the vendored Fennel/fetch sources. Seeding
+  itself is Fennel policy (`fen_web.demo.seed`, called from
+  `fen_web.demo.boot`): the bytes are written into the `fs:` vfs keyspace
+  through the ordinary `fen_web.tools.vfs` mechanism — no new persistence
+  path. **Seed-once invariant:** `seed-if-empty!` writes only when the vfs
+  is empty (a genuine first load), so a later load never clobbers user
+  work. The seeded `/index.html` renders through the existing
+  `preview.refresh`/`build-page` assembler out of the box (same-tree
+  `styles.css`/`app.js` inlined). Coverage: `apps/demo/tests/seed_test.fnl`
+  (first-load seeds, non-empty vfs untouched, seeded entry renders through
+  `build-page`) and the end-to-end seed assertion in
+  `apps/demo/src/bootTurn.test.ts`.
 
 ## Sandboxing invariant
 
