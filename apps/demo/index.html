@@ -22,6 +22,12 @@
          skeleton under this id; see apps/demo/fnl/fen_web/demo). -->
     <main id="fen-app" class="fen-app"></main>
 
+    <!-- Mount point for the sandboxed preview iframe (host.preview creates
+         the <iframe sandbox="allow-scripts"> under this id; fen-web#8). The
+         agent renders the IndexedDB app tree here and drives it over a
+         postMessage RPC — never with allow-same-origin. -->
+    <aside id="fen-preview" class="fen-preview"></aside>
+
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

@@ -3,7 +3,13 @@ import {
   type FenRuntime,
   type FenSource,
 } from "@fen-web/runtime";
-import { FetchPoller, normalizeOps, type DomOp, type HostFetch } from "@fen-web/bindings";
+import {
+  FetchPoller,
+  normalizeOps,
+  type DomOp,
+  type HostFetch,
+  type HostPreview,
+} from "@fen-web/bindings";
 
 // The runtime/host wiring for the demo, deliberately kept free of any
 // browser-only (`?raw` import, IndexedDB, real DOM/fetch) coupling so this
@@ -38,6 +44,9 @@ export interface DemoRuntimeDeps {
   kv: unknown;
   /** DOM sink: WebHostDomApply in the browser, FakeDom in tests. */
   dom: { apply(ops: DomOp[]): unknown };
+  /** Sandboxed-iframe preview host: WebHostPreview in the browser, FakePreview
+   * in tests. Drives the preview.* tools (fen-web#8). */
+  preview: HostPreview;
   /** HostFetch transport: WebHostFetch in the browser, ScriptedFetch in tests. */
   fetch: HostFetch;
   /** Vendored Fennel source (required in the browser; omit in node, which
@@ -102,6 +111,15 @@ export async function bootDemo(
       fetch_start: (fetchOpts: unknown) => poller.start(fetchOpts as never),
       fetch_poll: (id: number) => poller.poll(id),
       fetch_dispose: (id: number) => poller.dispose(id),
+      // host.preview: setHtml (preview.refresh) + the async postMessage RPC
+      // bridge (preview.query/click/fill/eval/screenshot). Mirrors the
+      // fetch start/poll/dispose shape so the Fennel tools yield between
+      // polls (docs/bindings/preview.md).
+      preview_set_html: (html: unknown) => deps.preview.setHtml(String(html)),
+      preview_rpc_start: (req: unknown) =>
+        deps.preview.rpcStart(req as never),
+      preview_rpc_poll: (id: number) => deps.preview.rpcPoll(id),
+      preview_rpc_dispose: (id: number) => deps.preview.rpcDispose(id),
     },
   });
 

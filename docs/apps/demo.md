@@ -74,12 +74,21 @@ see the top-level [README.md](../../README.md) non-goals.
   `loadFenTree`); the vendored Fennel compiler and cjson stub are bundled
   as raw text and passed to `createFenRuntime` so its Node-only `fs`
   readers never run in-page (see [../runtime/boot.md](../runtime/boot.md)).
-- **#8 — sandboxed iframe preview + `preview.*` tools.** `preview.refresh`
-  re-renders the IndexedDB tree into a sandboxed
-  `<iframe sandbox="allow-scripts">`. `preview.query(selector)`,
-  `preview.click(selector)`, `preview.fill(selector, value)`,
-  `preview.eval(expr)` drive the running app via `postMessage` RPC.
-  `preview.screenshot` renders canvas → dataURL.
+- **#8 — sandboxed iframe preview + `preview.*` tools (implemented).**
+  `preview.refresh` re-renders the IndexedDB tree into a sandboxed
+  `<iframe sandbox="allow-scripts">` (never `allow-same-origin`).
+  `preview.query(selector)`, `preview.click(selector)`,
+  `preview.fill(selector, value)`, `preview.eval(expr)` drive the running
+  app via a `postMessage` RPC channel; `preview.screenshot` renders a
+  canvas → dataURL. The RPC is the new `host.preview` primitive
+  (`packages/bindings/src/preview`, [../bindings/preview.md](../bindings/preview.md));
+  the page assembly (rendering the vfs tree, inlining same-tree
+  stylesheet/script refs) and the six tools live in Fennel
+  (`apps/demo/fnl/fen_web/demo/preview`), registered demo-only through the
+  per-owner manifest loader (`fen_web.demo.boot.load-extension!` on
+  `fen_web.demo.preview.manifest`) — the same path the file tools use, not
+  an ad-hoc one. Like `host.fetch`, the RPC is asynchronous, so each tool
+  starts/polls/yields the turn coroutine between polls rather than blocking.
 - **#9 — starter project.** A curated starter project seeded into
   IndexedDB on first load (open question in fen#99: curated starter vs.
   boot empty).
@@ -91,7 +100,16 @@ The preview iframe runs with `sandbox="allow-scripts"` only — **no**
 `postMessage` RPC channel. User-generated JS in the preview cannot reach
 the parent frame's virtual FS, the API key, or any forge token. This
 invariant is load-bearing for BYO-key safety and must not be relaxed to
-fix a preview capability gap — widen the RPC surface instead.
+fix a preview capability gap — widen the RPC surface instead. The
+`host.preview` primitive enforces it: it creates the iframe with only
+`allow-scripts`, validates that inbound RPC replies come from the iframe's
+own window (`event.source === iframe.contentWindow`; origin is `"null"` for
+a sandboxed frame and so is not a usable allowlist key), and never posts
+any secret into the iframe. Coverage:
+`packages/bindings/src/preview/webHostPreview.test.ts` (sandbox attribute,
+foreign-source rejection) and `apps/demo/tests/preview_test.fnl` (the page
+assembler never emits the stored API key). See
+[../bindings/preview.md](../bindings/preview.md).
 
 See also: [../architecture/fennel-first.md](../architecture/fennel-first.md)
 (`host.dom-apply` role), [extension.md](extension.md) for the other

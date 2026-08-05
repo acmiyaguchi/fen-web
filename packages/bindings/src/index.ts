@@ -19,3 +19,15 @@ export { applyDomOps, normalizeOps } from "./dom/applyOps.js";
 export { WebHostDomApply } from "./dom/webDomApply.js";
 export { FakeDom } from "./dom/fakeDom.js";
 export type { FakeNode } from "./dom/fakeDom.js";
+
+export type {
+  HostPreview,
+  PreviewRpcMethod,
+  PreviewRpcRequest,
+  PreviewRpcResult,
+  PreviewPollResult,
+} from "./preview/types.js";
+export { WebHostPreview } from "./preview/webHostPreview.js";
+export type { WebHostPreviewOptions } from "./preview/webHostPreview.js";
+export { FakePreview } from "./preview/fakePreview.js";
+export { wrapSrcdoc, PREVIEW_RESPONDER_SOURCE } from "./preview/responder.js";

@@ -13,6 +13,9 @@ local fennel = require("fennel")
 local roots = {
   "apps/demo/fnl",
   "apps/demo/tests",
+  -- The preview tools/HTML builder reuse the fen-web platform tree
+  -- (fen_web.tools.util / fen_web.tools.vfs), so specs need it on the path.
+  "packages/platform/fnl",
   "fen/packages/core/src",
   "fen/packages/util/src",
 }

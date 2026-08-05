@@ -26,6 +26,7 @@ wiring.
 | `host.fetch` | HTTP backend seam (streaming via `getReader()` into fen's SSE parser) |
 | `host.kv` | IndexedDB get/put/delete/cursor — virtual-FS substrate |
 | `host.dom-apply` | Batched DOM mutations/queries (page, iframe, offscreen doc) |
+| `host.preview` | Sandboxed-iframe preview: render the vfs app + drive it over a `postMessage` RPC (fen-web#8) |
 | `host.msg` | `chrome.runtime` messaging (extension form) |
 | `host.ext` | Guarded proxy to specific `chrome.*` namespaces (extension form) |
 
@@ -33,8 +34,10 @@ wiring.
 `packages/bindings`; see [../bindings/fetch.md](../bindings/fetch.md),
 [../bindings/kv.md](../bindings/kv.md), and
 [../bindings/dom.md](../bindings/dom.md) (issue #6, the DOM presenter
-seam). `host.msg` and `host.ext` are not yet implemented (planned per the
-extension form, #11).
+seam). `host.preview` is implemented in `packages/bindings/src/preview`
+(issue #8); see [../bindings/preview.md](../bindings/preview.md). `host.msg`
+and `host.ext` are not yet implemented (planned per the extension form,
+#11).
 
 ## Why this split
 
