@@ -1,16 +1,31 @@
 # apps/demo
 
-Planned. Issues #6-#9. Not yet implemented.
+In progress. Issue #6 (DOM presenter) is implemented; #7-#9 are planned.
 
 Self-contained single page: IndexedDB-backed virtual FS, sandboxed iframe
 preview the agent can drive, BYO API key. No key-proxy infrastructure —
 see the top-level [README.md](../../README.md) non-goals.
 
-## Planned shape (by issue)
+## Shape (by issue)
 
-- **#6 — DOM presenter.** Reuses the compositional panel/fragment model
-  from fen's TUI extension, driven via `host.dom-apply`. Replaces
-  termbox2's rendering, not its composition model.
+- **#6 — DOM presenter (implemented).** A presenter register-kind
+  extension in `apps/demo/fnl/fen_web/demo` that replaces the termbox2 TUI
+  with a browser DOM UI over [`host.dom-apply`](../bindings/dom.md), while
+  reusing fen's compositional model unchanged: it contributes `:status`
+  and `:panel` items and folds `api.on :*` bus events into a transcript
+  (`ingest.fnl`), exactly like the in-tree TUI/web presenters. `layout.fnl`
+  turns that state into a structured fragment (plain `{:text :style}` rows,
+  not `fen.util.panel`'s terminal box-drawing) and `dom.fnl` diffs it into
+  one batched `host.dom-apply` mutation list per frame against a committed
+  model. That committed model, the transcript, status, and any in-flight
+  prompt/select live in the reload-excluded `state.fnl`, so `/reload` swaps
+  behavior in-page without rebuilding live DOM — the TUI/web state-module
+  split. `api.ui.prompt`/`api.ui.select` are real modal DOM overlays
+  awaited cooperatively by yielding the active turn coroutine; the web
+  presenter's `web-prompt` was unimplemented, so this is the first real
+  browser prompt. Input never calls back into Lua: `listen` ops enqueue
+  events the run loop drains poll-style. The single-page HTML shell that
+  mounts `#fen-app` and wires `__fen_host.dom_apply` is #7.
 - **#7 — shell + BYO-key settings.** Single-page shell; API keys stored in
   IndexedDB, never leave the browser. Provider order: OpenAI-compatible
   endpoints first (`api.openai.com` accepts direct browser calls with a
