@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Starter todo</title>
+    <!-- Same-tree references; the preview page assembler inlines these from
+         the virtual FS (docs/bindings/preview.md), so the app runs standalone
+         inside the sandboxed iframe with no network reach. -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h1>Todo</h1>
+      <form id="new-todo-form" class="new-todo">
+        <input
+          id="new-todo"
+          name="new-todo"
+          type="text"
+          autocomplete="off"
+          placeholder="What needs doing?"
+          aria-label="New todo"
+        />
+        <button id="add-todo" type="submit">Add</button>
+      </form>
+      <ul id="todo-list" class="todo-list" aria-live="polite"></ul>
+      <p id="empty-state" class="empty-state">Nothing yet — add your first todo.</p>
+      <footer class="summary">
+        <span id="remaining-count">0</span> remaining
+      </footer>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

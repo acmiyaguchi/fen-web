@@ -12,6 +12,13 @@ export { MemoryKv } from "./kv/memoryKv.js";
 export { IndexedDbKv } from "./kv/indexedDbKv.js";
 export { SyncKvCache } from "./kv/syncKvCache.js";
 export type { SyncKv } from "./kv/syncKvCache.js";
+export {
+  SEED_MARKER_KEY,
+  FS_PREFIX,
+  fsKeyFor,
+  validateStarterFiles,
+  seedIfEmptyKv,
+} from "./kv/starterSeed.js";
 
 export type { DomOp, DomEvent, DomResult, HostDomApply } from "./dom/types.js";
 export type { DomAdapter } from "./dom/applyOps.js";

@@ -214,6 +214,14 @@
                  "'; only 'anthropic' is wired today (see docs/apps/demo.md)")))
     (let [kv (and _G.__fen_host _G.__fen_host.kv)
           _install (fs-kv.install! kv)
+          ;; First-load starter project (fen-web#9) is seeded atomically and
+          ;; durably into the persistent store BEFORE this VM boots (JS side:
+          ;; IndexedDbKv.seedIfEmpty in browserBoot.ts), so the synchronous kv
+          ;; view already reflects a consistent, fully-seeded vfs here. Seeding
+          ;; the durable store in JS (not this coroutine's snapshot) is what
+          ;; makes it race-safe across tabs and all-or-nothing on failure — the
+          ;; Lua coroutine cannot await the IndexedDB transaction that gives
+          ;; those guarantees.
           spec (anthropic-provider-spec)
           api-key (resolve-api-key spec)]
       ;; Register the compositional pieces against fen's real api. The tool

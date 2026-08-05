@@ -40,7 +40,11 @@ export interface DemoRuntimeDeps {
   fetchBackendSource: string;
   /** Synchronous kv view over the store (SyncKvCache in the browser, a
    * table-backed stub in tests). The API key must already be present under
-   * `env/apikey/<VAR>` before boot. */
+   * `env/apikey/<VAR>` before boot; the first-load starter project
+   * (fen-web#9) must also already be seeded into the durable store, since the
+   * atomic/durable seed happens against the async backing before this
+   * synchronous view is snapshotted (browserBoot.ts / IndexedDbKv.seedIfEmpty).
+   */
   kv: unknown;
   /** DOM sink: WebHostDomApply in the browser, FakeDom in tests. */
   dom: { apply(ops: DomOp[]): unknown };
