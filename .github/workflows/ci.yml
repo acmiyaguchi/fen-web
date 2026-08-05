@@ -44,8 +44,14 @@ jobs:
       - name: Run workspace tests (node:test)
         run: nix develop -c npm test
 
-      - name: Run Fennel tests (Busted)
+      - name: Run Fennel tests (Busted, bindings)
         run: >
           nix develop -c busted --loaders=lua,fennel
           --helper=packages/bindings/tests/helper.lua --pattern=_test
           packages/bindings/tests
+
+      - name: Run Fennel tests (Busted, platform)
+        run: >
+          nix develop -c busted --loaders=lua,fennel
+          --helper=packages/platform/tests/helper.lua --pattern=_test
+          packages/platform/tests
