@@ -47,6 +47,11 @@ apps/extension/         # MV3 extension (manifest + fnl/ tree)
 
 Soft dependency on fen#175 (headless agent API): the bootstrap drives `fen.core.agent` directly and adopts the formal API when it lands.
 
+## Development
+
+Toolchain is managed by Nix: `nix develop` (or `direnv allow` once) provides Node, Lua 5.4, Fennel, Busted, and lua-cjson.
+CI runs everything through the same flake (`nix develop -c ...`) so local and CI toolchains cannot drift.
+
 ## Auth
 
 BYO-key only — keys live in IndexedDB (demo) or `chrome.storage` (extension) and never leave the browser.
