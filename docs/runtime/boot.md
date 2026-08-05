@@ -192,6 +192,21 @@ key override them):
   `fen/packages/util/src/fen/util/process.fnl:420-426` exactly — no
   invented fields.
 
+## Browser bundling
+
+`createFenRuntime`'s Node-only helpers (`loadVendoredFennelSource`,
+`loadVendoredCjsonStubSource`, `loadFenTree`) read from disk via `node:fs`.
+So importing `@fen-web/runtime` in a browser bundle never drags `node:fs`
+into the executed graph, the runtime keeps all `node:*` usage out of module
+top level and defers the disk-backed defaults: `fennelSource` falls back to
+a lazy `import("./vendoredFennel.js")` only when the caller omits it, and
+the built-in `cjson` preload is disk-loaded only when the caller passes no
+`cjson` entry in `opts.preload`. The browser (see
+[../apps/demo.md](../apps/demo.md)) always supplies both from bundled raw
+text, so those readers never run in-page; the demo's Vite config aliases
+the residual `node:*` specifiers (reachable only through the never-taken
+lazy `import`) to a throwing stub so Rollup can still resolve them.
+
 ## Vendored Fennel
 
 `packages/runtime/vendor/fennel-1.6.0.lua`, version pinned to match

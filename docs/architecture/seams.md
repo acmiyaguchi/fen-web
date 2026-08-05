@@ -76,6 +76,12 @@ than worked around locally, per the "widen the seam in fen" rule above:
   [issue #17](https://github.com/acmiyaguchi/fen-web/issues/17); see
   [../runtime/boot.md](../runtime/boot.md)'s cjson stub section for the
   fen-web-side hazard this mirrors.
+- [fen#492](https://github.com/acmiyaguchi/fen/issues/492) — provider
+  extra-headers / browser-direct seam so Anthropic's
+  `anthropic-dangerous-direct-browser-access` opt-in header can be set from
+  the provider layer instead of fen-web's HTTP transport backend
+  (`packages/bindings/fnl/fen/util/http/backends/fetch.fnl`), which carries
+  it as an interim host-keyed special-case; see [../bindings/fetch.md](../bindings/fetch.md).
 
 See also: [fennel-first.md](fennel-first.md),
 [../runtime/module-loading.md](../runtime/module-loading.md).

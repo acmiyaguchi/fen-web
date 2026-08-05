@@ -26,15 +26,54 @@ see the top-level [README.md](../../README.md) non-goals.
   browser prompt. Input never calls back into Lua: `listen` ops enqueue
   events the run loop drains poll-style. The single-page HTML shell that
   mounts `#fen-app` and wires `__fen_host.dom_apply` is #7.
-- **#7 — shell + BYO-key settings.** Single-page shell; API keys stored in
-  IndexedDB, never leave the browser. Provider order: OpenAI-compatible
-  endpoints first (`api.openai.com` accepts direct browser calls with a
-  bearer key; OpenRouter is the likely servicing basis — one key, many
-  models, CORS-open); Anthropic supported via
-  `anthropic-dangerous-direct-browser-access` but not the default.
-  Settings persistence is part of the shim work in
-  [../platform/shims.md](../platform/shims.md) (`core/settings.fnl`,
-  `core/llm/models.fnl`).
+- **#7 — shell + BYO-key settings (implemented).** The single-page shell
+  (`apps/demo/index.html` + `apps/demo/src/*.ts`, bundled by Vite) wires
+  the runtime + bindings + DOM presenter into a working page and runs the
+  agent end to end. The runtime-wiring gap deferred from #6's PR is
+  closed: `src/boot.ts` installs `__fen_host` with `kv`/`dom_apply`/
+  `fetch_*`, installs the fen-web fetch backend, and drives the presenter
+  turn loop inside the runtime coroutine pump; the register/agent/turn
+  orchestration itself lives in Fennel
+  (`apps/demo/fnl/fen_web/demo/boot.fnl`, the browser analog of fen's
+  `fen.interactive.run!`). Rather than re-implement the interactive
+  turn/tick loop, `boot.fnl` reuses fen's own lifecycle modules —
+  `fen.run_state`, `fen.turn_submit`, `fen.turn_lifecycle`, and
+  `fen.session_lifecycle` (make-flush/`:message-appended` install/close) —
+  so the canonical `:runtime-tick`/`:agent-started`/`:agent-turn-complete`/
+  `:agent-shutdown` events reach extensions exactly as they do under the
+  TUI. The tool and DOM-presenter extensions load through their manifests
+  via the extension loader's public api factory + manifest reader
+  (`load-extension!`), so `reload-modules`/`reload-exclude` and owner
+  cleanup are real; the full CLI loader can't run in-VM (its compiler dep
+  pulls `fen.runtime`), and an end-to-end in-page `/reload` is tracked as
+  fen-web#19. BYO API keys are entered in the shell's settings gate
+  (`src/settings.ts`) and stored in IndexedDB under `env/apikey/<VAR>` —
+  the exact path the `fs_kv` shim maps `os.getenv` to
+  ([../platform/shims.md](../platform/shims.md)). The key is resolved
+  in-VM via `os.getenv("<VAR>")` from the provider's `:api-key-var` (not
+  marshalled through a JS global), so it never leaves the browser (sent
+  only in the provider request's auth header, directly to the provider
+  API; no key proxy). Changing or forgetting the key cooperatively stops
+  the running VM (`DemoSession.stop`) before erasing/replacing storage, so
+  the old key snapshot is actually revoked. Only `"anthropic"` is accepted
+  today; other providers are rejected up front rather than silently routed. Provider order: Anthropic is wired
+  first because `api.anthropic.com` accepts direct-from-page calls (the
+  fetch backend adds the required `anthropic-dangerous-direct-browser-access`
+  header for that host, see [../bindings/fetch.md](../bindings/fetch.md));
+  OpenAI-compatible endpoints (incl. OpenRouter) follow as their provider
+  extensions land in the bundle. fen's kv-backed seams (sessions,
+  `fs_kv`) call kv synchronously, so the shell mirrors IndexedDB into a
+  `SyncKvCache` (`packages/bindings`) at boot — see
+  [../bindings/kv.md](../bindings/kv.md).
+
+  **Bundler/dev-server:** Vite (`apps/demo/vite.config.ts`). `npm run dev
+  -w @fen-web/demo` serves the page; `npm run build` produces the static
+  bundle. The fen submodule + fen-web Fennel trees are inlined at bundle
+  time via `import.meta.glob(..., {query:'?raw'})` and mapped to dotted
+  `require` names in `src/sources.ts` (the browser analog of
+  `loadFenTree`); the vendored Fennel compiler and cjson stub are bundled
+  as raw text and passed to `createFenRuntime` so its Node-only `fs`
+  readers never run in-page (see [../runtime/boot.md](../runtime/boot.md)).
 - **#8 — sandboxed iframe preview + `preview.*` tools.** `preview.refresh`
   re-renders the IndexedDB tree into a sandboxed
   `<iframe sandbox="allow-scripts">`. `preview.query(selector)`,

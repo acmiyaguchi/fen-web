@@ -88,6 +88,23 @@ Fennel backend (`fetch.fnl`) must not (and does not) reconstruct a full
 body from `on-chunk` chunks when `accumulate-body?` is false — it passes
 `p.body` (the host's bounded head) straight through.
 
+## Anthropic direct-browser CORS header (interim)
+
+Provider-level headers normally belong to the Fennel provider/policy layer
+that builds `opts.headers` (same as the native backend). The one exception
+lives in `fetch.fnl`'s `translate`: for `api.anthropic.com` it adds
+`anthropic-dangerous-direct-browser-access: true`, the header that opts a
+request into CORS from a page. It sits in the fetch backend, keyed strictly
+on the Anthropic host, because (a) it is a property of *this* transport
+(the native libcurl backend never needs it) and (b) fen's pinned Anthropic
+provider exposes no extra-header seam to set it from the provider layer. It
+never overwrites a caller-set header. This is interim: the durable fix is a
+provider extra-headers / browser-direct option upstream in fen (per
+[../architecture/seams.md](../architecture/seams.md)'s "widen the seam in
+fen" rule); once that lands, this moves to the provider spec and the
+host-keyed special-case is deleted. Covered by
+`packages/bindings/tests/fetch_test.fnl`.
+
 ## Poll protocol and cooperative-only mode
 
 See [host-protocol.md](host-protocol.md) for the full `fetch_start`/

@@ -1,0 +1,210 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { loadFenTree, type FenSource } from "@fen-web/runtime";
+import {
+  FakeDom,
+  type DomOp,
+  type FetchRequestOptions,
+  type FetchResult,
+  type HostFetch,
+  ScriptedFetch,
+} from "@fen-web/bindings";
+import { bootDemo, type DemoRuntimeDeps } from "./boot.js";
+
+// End-to-end proof that the #7 wiring boots the runtime + bindings + DOM
+// presenter and runs one real agent turn: it invokes the *actual* exported
+// bootDemo (the same function the browser page's browserBoot.ts calls),
+// injecting node-side host primitives — a synchronous table-backed kv, a
+// FakeDom, and a recording ScriptedFetch — instead of the browser's
+// IndexedDB/real-DOM/real-fetch. This covers the whole Fennel + boot.ts
+// seam: source assembly, fetch-backend install, __demo_opts staging, the
+// in-VM `os.getenv` credential resolution, the run-loop scheduler, and the
+// cooperative stop() path. The browser-only glue (IndexedDbKv/SyncKvCache,
+// WebHost{DomApply,Fetch}, the `?raw` bundling in browserBoot.ts) is covered
+// by typecheck.
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, "..", "..", "..");
+const fenPackages = path.resolve(repoRoot, "fen", "packages");
+const fenExtensions = path.resolve(repoRoot, "fen", "extensions");
+const bindingsFnl = path.resolve(repoRoot, "packages", "bindings", "fnl");
+const platformFnl = path.resolve(repoRoot, "packages", "platform", "fnl");
+const demoFnl = path.resolve(here, "..", "fnl");
+
+const KEY = "test-key";
+const REPLY = "Hello from Claude";
+
+function buildSources(): Map<string, FenSource> {
+  const sources = loadFenTree([
+    path.join(fenPackages, "core", "src"),
+    path.join(fenPackages, "util", "src"),
+    // fen.run_state / turn_submit / turn_lifecycle / session_lifecycle live
+    // in the `fen.*` package; the demo boot reuses them (see sources.ts).
+    path.join(fenPackages, "fen", "src"),
+  ]);
+  for (const [name, src] of loadFenTree([platformFnl, demoFnl])) sources.set(name, src);
+
+  // Flat provider dirs (real dotted names come from a rockspec, not the
+  // directory layout) — same treatment as turn.test.ts and sources.ts.
+  const anthropicDir = path.join(fenExtensions, "adapters", "providers", "anthropic");
+  const sharedDir = path.join(fenExtensions, "adapters", "providers", "shared");
+  const manual: Record<string, string> = {
+    "fen.extensions.provider_anthropic.anthropic_messages": path.join(
+      anthropicDir,
+      "anthropic_messages.fnl",
+    ),
+    "fen.extensions.provider_anthropic": path.join(anthropicDir, "init.fnl"),
+    "fen.extensions.provider_anthropic.manifest": path.join(anthropicDir, "manifest.fnl"),
+    "fen.extensions.provider_shared.streaming": path.join(sharedDir, "streaming.fnl"),
+    "fen.extensions.provider_shared.retry": path.join(sharedDir, "retry.fnl"),
+  };
+  for (const [name, file] of Object.entries(manual)) {
+    sources.set(name, { lang: "fnl", src: readFileSync(file, "utf8") });
+  }
+  return sources;
+}
+
+function fetchBackendSource(): string {
+  return readFileSync(
+    path.join(bindingsFnl, "fen", "util", "http", "backends", "fetch.fnl"),
+    "utf8",
+  );
+}
+
+/** A table-backed synchronous kv (the SyncKv contract) seeded with the API
+ * key under the exact path the fs_kv shim maps `os.getenv("<VAR>")` to. */
+function makeSyncKv() {
+  const store = new Map<string, string>();
+  store.set("env/apikey/ANTHROPIC_API_KEY", KEY);
+  return {
+    sync: true as const,
+    get: (k: string) => store.get(k),
+    put: (k: string, v: string) => void store.set(k, v),
+    delete: (k: string) => void store.delete(k),
+    list: (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix ?? "")).sort(),
+    store,
+  };
+}
+
+/** Wrap a HostFetch to record the request options each call receives, so the
+ * test can assert the request URL and auth/CORS headers the agent sends. */
+function recordingFetch(inner: HostFetch): { fetch: HostFetch; requests: FetchRequestOptions[] } {
+  const requests: FetchRequestOptions[] = [];
+  return {
+    requests,
+    fetch: {
+      async fetch(opts: FetchRequestOptions): Promise<FetchResult> {
+        requests.push(opts);
+        return inner.fetch(opts);
+      },
+    },
+  };
+}
+
+/** One Anthropic Messages streaming completion: typed SSE events matching
+ * anthropic_messages.fnl's process-stream-event!. */
+function anthropicSse(text: string): string[] {
+  const frame = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
+  const words = text.split(" ");
+  return [
+    frame({ type: "message_start", message: { usage: { input_tokens: 8 } } }),
+    frame({ type: "content_block_start", index: 0, content_block: { type: "text" } }),
+    ...words.map((w, i) =>
+      frame({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: i === 0 ? w : " " + w },
+      }),
+    ),
+    frame({ type: "content_block_stop", index: 0 }),
+    frame({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: words.length } }),
+    frame({ type: "message_stop" }),
+  ];
+}
+
+function transcriptText(dom: FakeDom): string {
+  return dom
+    .childIds("fen-transcript")
+    .map((id) => dom.get(id).text)
+    .join("\n");
+}
+
+test("bootDemo drives the demo presenter through one Anthropic turn end to end", async () => {
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicSse(REPLY),
+  });
+  const recorder = recordingFetch(scripted);
+  const dom = new FakeDom("fen-app");
+  const kv = makeSyncKv();
+
+  // Deterministic, bounded scheduler: bootDemo pushes each next frame here
+  // and the test drains it, so no wall-clock rAF/timeout timing is involved.
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  const runUntil = async (cond: () => boolean, maxMs = 8000): Promise<void> => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < maxMs) {
+      const t = tasks.shift();
+      if (t) t();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  };
+
+  const deps: DemoRuntimeDeps = {
+    sources: buildSources(),
+    fetchBackendSource: fetchBackendSource(),
+    kv,
+    dom,
+    fetch: recorder.fetch,
+    schedule,
+  };
+
+  const session = await bootDemo({ provider: "anthropic", model: "claude-haiku-4-5" }, deps);
+
+  // Wait for the presenter skeleton to build and the run loop to be live.
+  await runUntil(() => dom.exists("fen-inputbar") && dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-inputbar"), "presenter skeleton should be built");
+
+  // Simulate a user submitting a prompt.
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "hi" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+
+  // Pump until the turn completes and both messages are persisted.
+  const entryCount = () => [...kv.store.keys()].filter((k) => k.includes(":entry:")).length;
+  await runUntil(() => entryCount() >= 2);
+
+  const transcript = transcriptText(dom);
+  assert.ok(transcript.includes("> hi"), `expected the user row, got:\n${transcript}`);
+  assert.ok(transcript.includes(REPLY), `expected the streamed assistant reply, got:\n${transcript}`);
+  assert.equal(entryCount(), 2, `expected 2 persisted entries, got ${entryCount()}`);
+
+  // The agent sent exactly one request, to Anthropic, carrying the key
+  // resolved in-VM from kv (env/apikey/ANTHROPIC_API_KEY) plus the browser
+  // CORS opt-in header the fetch backend adds for that host.
+  assert.equal(recorder.requests.length, 1, "expected exactly one provider request");
+  const req = recorder.requests[0];
+  assert.equal(req.url, "https://api.anthropic.com/v1/messages", "request URL should be Anthropic");
+  const headers = (req.headers ?? {}) as Record<string, string>;
+  assert.equal(headers["x-api-key"], KEY, "auth header should carry the in-VM-resolved key");
+  assert.equal(
+    headers["anthropic-dangerous-direct-browser-access"],
+    "true",
+    "transport should add the Anthropic direct-browser CORS header",
+  );
+
+  // Cooperative shutdown: stop() asks the run loop to quit and resolves once
+  // the VM is torn down; drive frames until it settles.
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await runUntil(() => stopped, 3000);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
+});

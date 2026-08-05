@@ -1,5 +1,3 @@
-import { loadVendoredCjsonStubSource } from "./vendoredFennel.js";
-
 /**
  * Built-in minimal stubs for natives that don't exist in a browser Lua VM,
  * required so `(require :fen.core.agent)`'s 33-module subgraph loads.
@@ -19,8 +17,6 @@ import { loadVendoredCjsonStubSource } from "./vendoredFennel.js";
  * surface (`encode`, `decode`, `null`, `empty_array`, `array_mt`,
  * `decode_array_with_array_mt`).
  */
-export const CJSON_STUB_LUA = loadVendoredCjsonStubSource();
-
 /**
  * fen.util.process: no OS process access exists in-VM. `monotonic-ms` is
  * wired to a real wall clock (`performance.now` via `__fen_host.now_ms`,
@@ -57,7 +53,12 @@ return {
 }
 `;
 
+// Names always preloaded unless the caller overrides them via opts.preload.
+// `cjson` is intentionally NOT eagerly loaded from disk here: it is only
+// read when a caller omits it (Node), through the lazy dynamic import in
+// createFenRuntime, so importing this module (and @fen-web/runtime) in a
+// browser bundle never touches node:fs. Browser callers pass their own
+// bundled `cjson` preload.
 export const BUILTIN_PRELOAD_LUA: Record<string, string> = {
-  cjson: CJSON_STUB_LUA,
   "fen.util.process": PROCESS_STUB_LUA,
 };

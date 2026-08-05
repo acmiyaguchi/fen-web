@@ -42,6 +42,18 @@ in the first place (coroutine yield-across-C-call hazard).
   "￿")` cursor scan rather than enumerating the whole store.
 - **`MemoryKv`** (`packages/bindings/src/kv/memoryKv.ts`) — in-memory stub
   for desktop Busted/Node tests, no browser required.
+- **`SyncKvCache`** (`packages/bindings/src/kv/syncKvCache.ts`) — a
+  *synchronous* view over an async `HostKv`, produced by loading the whole
+  key space into memory once (`SyncKvCache.load`) and writing back
+  asynchronously (`flush()` awaits durability). It exposes `sync = true`,
+  the capability flag `fen_web.sessions` asserts before registering
+  (see [../platform/shims.md](../platform/shims.md)). This is the demo
+  shell's answer (issue #7) to the sync-over-async gap below: fen's
+  kv-backed seams (`kv_session`, `fs_kv`) call get/put/delete/list
+  synchronously, and a single-page, single-VM app can just mirror the
+  store rather than build the streaming coroutine bridge. It is not
+  multi-tab-coherent; when that matters, the coroutine bridge below
+  supersedes it (the `sync = true` contract is the same either way).
 
 ## Consumers (planned)
 

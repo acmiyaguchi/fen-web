@@ -1,0 +1,282 @@
+:root {
+  --bg: #14171c;
+  --panel: #1c2027;
+  --fg: #d7dce3;
+  --dim: #8a93a2;
+  --accent: #6ea8fe;
+  --error: #ff6b6b;
+  --user: #9ad0a0;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: var(--panel);
+  border-bottom: 1px solid #2a2f38;
+}
+
+.topbar-title {
+  font-weight: 600;
+}
+
+.topbar-settings {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid #39414d;
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+}
+
+/* --- settings gate --- */
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 16, 0.85);
+  z-index: 10;
+}
+
+.settings-overlay.hidden {
+  display: none;
+}
+
+.settings-form {
+  background: var(--panel);
+  border: 1px solid #2a2f38;
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: min(30rem, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.settings-form h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.1rem;
+}
+
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--dim);
+}
+
+.settings-row input,
+.settings-row select {
+  background: #12151a;
+  color: var(--fg);
+  border: 1px solid #39414d;
+  border-radius: 4px;
+  padding: 0.5rem;
+  font: inherit;
+}
+
+.settings-notice {
+  margin: 0;
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.settings-save {
+  background: var(--accent);
+  color: #0b0e13;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-clear {
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid #39414d;
+  border-radius: 4px;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+}
+
+/* --- presenter mount (#fen-app) --- */
+
+.fen-app {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.5rem 0.75rem;
+  gap: 0.5rem;
+}
+
+.fen-status {
+  display: flex;
+  justify-content: space-between;
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+
+.fen-status-left,
+.fen-status-right {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.fen-transcript {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fen-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.fen-inputbar {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.fen-input {
+  flex: 1;
+  background: #12151a;
+  color: var(--fg);
+  border: 1px solid #39414d;
+  border-radius: 4px;
+  padding: 0.5rem;
+  font: inherit;
+}
+
+.fen-send {
+  background: var(--accent);
+  color: #0b0e13;
+  border: none;
+  border-radius: 4px;
+  padding: 0 1rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* semantic row styles emitted by the presenter's :style tokens */
+.style-user,
+.row.style-user {
+  color: var(--user);
+}
+.style-assistant,
+.row.style-assistant {
+  color: var(--fg);
+}
+.style-dim,
+.row.style-dim {
+  color: var(--dim);
+}
+.style-error,
+.row.style-error {
+  color: var(--error);
+}
+.style-tool,
+.row.style-tool {
+  color: var(--accent);
+}
+.style-status {
+  color: var(--dim);
+}
+
+/* --- overlays (ui.prompt / ui.select) --- */
+
+.fen-overlay:empty {
+  display: none;
+}
+
+.overlay-box {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  height: max-content;
+  width: min(28rem, 92vw);
+  background: var(--panel);
+  border: 1px solid #2a2f38;
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 20;
+}
+
+.overlay-title {
+  font-weight: 600;
+}
+
+.overlay-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.overlay-choice,
+.overlay-cancel,
+.overlay-submit {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid #39414d;
+  border-radius: 4px;
+  padding: 0.5rem;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.overlay-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.overlay-input {
+  flex: 1;
+  background: #12151a;
+  color: var(--fg);
+  border: 1px solid #39414d;
+  border-radius: 4px;
+  padding: 0.5rem;
+  font: inherit;
+}

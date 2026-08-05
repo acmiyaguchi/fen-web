@@ -78,8 +78,11 @@ profiles (#22, see [platform/shims.md](platform/shims.md)).
 (`packages/bindings/src/dom`, see [bindings/dom.md](bindings/dom.md)) plus a
 Fennel DOM presenter (`apps/demo/fnl/fen_web/demo`, see
 [apps/demo.md](apps/demo.md)) that reuses fen's compositional panel/fragment
-model and diffs one batched mutation list per frame. The rest of `apps/demo`
-(#7-#9, BYO-key single-page shell, iframe preview, starter project) and
+model and diffs one batched mutation list per frame. The BYO-key single-page
+shell (#7) has landed on top: `apps/demo` is now a Vite-bundled working
+page that boots the runtime + bindings + presenter and runs an Anthropic
+turn end to end, with API keys stored browser-locally in IndexedDB. The
+rest of `apps/demo` (#8-#9, iframe preview, starter project) and
 `apps/extension` (#11, deferred, trails the demo) remain design-only. See
 the top-level [README.md](../README.md) for the architecture summary and
 layout.
