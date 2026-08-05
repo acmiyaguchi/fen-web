@@ -104,6 +104,35 @@
             (assert.are.equal false host._state.start-opts.accumulateBody))
           (set _G.__fen_host nil))))
 
+    (it "adds the anthropic direct-browser CORS header for api.anthropic.com only"
+      (fn []
+        (let [fetch (require :fen.util.http.backends.fetch)
+              host (make-fake-host [{:chunks [] :done true :status 200 :headers {} :body ""}])]
+          (set _G.__fen_host host)
+          (fetch.request {:method "POST"
+                           :url "https://api.anthropic.com/v1/messages"
+                           :headers {:x-api-key "sk"}
+                           :yield (fn [])})
+          (assert.are.equal "true"
+            (. host._state.start-opts.headers
+               :anthropic-dangerous-direct-browser-access))
+          ;; The caller's own headers survive alongside the added one.
+          (assert.are.equal "sk" (. host._state.start-opts.headers :x-api-key))
+          (set _G.__fen_host nil))))
+
+    (it "does not add the anthropic header for other hosts"
+      (fn []
+        (let [fetch (require :fen.util.http.backends.fetch)
+              host (make-fake-host [{:chunks [] :done true :status 200 :headers {} :body ""}])]
+          (set _G.__fen_host host)
+          (fetch.request {:method "POST"
+                           :url "https://api.openai.com/v1/chat/completions"
+                           :headers {}
+                           :yield (fn [])})
+          (assert.is_nil (. host._state.start-opts.headers
+                            :anthropic-dangerous-direct-browser-access))
+          (set _G.__fen_host nil))))
+
     (it "surfaces {:error} without a status when the host reports one"
       (fn []
         (let [fetch (require :fen.util.http.backends.fetch)

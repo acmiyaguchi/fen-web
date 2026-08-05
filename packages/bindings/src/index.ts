@@ -10,6 +10,8 @@ export type { FetchPollResult } from "./fetch/pollProtocol.js";
 export type { HostKv } from "./kv/types.js";
 export { MemoryKv } from "./kv/memoryKv.js";
 export { IndexedDbKv } from "./kv/indexedDbKv.js";
+export { SyncKvCache } from "./kv/syncKvCache.js";
+export type { SyncKv } from "./kv/syncKvCache.js";
 
 export type { DomOp, DomEvent, DomResult, HostDomApply } from "./dom/types.js";
 export type { DomAdapter } from "./dom/applyOps.js";

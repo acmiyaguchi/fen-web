@@ -1,5 +1,4 @@
 import { LuaFactory, type LuaEngine } from "wasmoon";
-import { FENNEL_VERSION, loadVendoredFennelSource } from "./vendoredFennel.js";
 import { resolveSource, type SourceLookup, type FenSource } from "./sources.js";
 import { BUILTIN_PRELOAD_LUA } from "./stubs.js";
 
@@ -198,7 +197,10 @@ export async function createFenRuntime(opts: FenRuntimeOptions): Promise<FenRunt
   const host = { ...defaultHost(), ...(opts.host ?? {}) };
   lua.global.set("__fen_host", host);
 
-  const fennelSource = opts.fennelSource ?? loadVendoredFennelSource();
+  // Node default is loaded lazily so a browser bundle (which always passes
+  // opts.fennelSource) never pulls the node:fs-backed reader into its graph.
+  const fennelSource =
+    opts.fennelSource ?? (await import("./vendoredFennel.js")).loadVendoredFennelSource();
   lua.global.set("__fennel_src", fennelSource);
   await lua.doString(`
     local chunk = assert(load(__fennel_src, "@fennel.lua"))
@@ -247,8 +249,14 @@ export async function createFenRuntime(opts: FenRuntimeOptions): Promise<FenRunt
     },
   };
 
-  // Built-in stubs first, caller preloads win on key collision.
+  // Built-in stubs first, caller preloads win on key collision. `cjson`'s
+  // default is disk-loaded lazily and only when the caller didn't supply
+  // one, keeping node:fs out of a browser bundle's import graph (browser
+  // callers pass their own bundled cjson preload).
   const preloads: Record<string, PreloadEntry> = { ...BUILTIN_PRELOAD_LUA, ...(opts.preload ?? {}) };
+  if (preloads.cjson === undefined) {
+    preloads.cjson = (await import("./vendoredFennel.js")).loadVendoredCjsonStubSource();
+  }
   for (const [name, entry] of Object.entries(preloads)) {
     await installPreload(lua, rt, name, entry);
   }

@@ -6,12 +6,21 @@
 ;; primitive, and it owns policy (timeout defaults, accumulate-body?,
 ;; error shapes) — the JS side (packages/bindings) is transport only.
 ;;
-;; Provider-level headers (e.g. Anthropic's
-;; `anthropic-dangerous-direct-browser-access: true` for direct-from-page
-;; calls) are NOT this file's concern: they belong to the Fennel
-;; provider/policy layer that builds `opts.headers` before calling
-;; fen.util.http.request, same as with the native backend. This backend
-;; only transports whatever headers it's given.
+;; Provider-level headers generally belong to the Fennel provider/policy
+;; layer that builds `opts.headers` before calling fen.util.http.request,
+;; same as with the native backend — this backend only transports whatever
+;; headers it's given. The one exception is a *browser-transport* header
+;; that is meaningless off-browser and that fen's pinned provider has no
+;; option to set: Anthropic's `anthropic-dangerous-direct-browser-access:
+;; true`, which opts a request into CORS from a page. It is added here,
+;; keyed strictly on the api.anthropic.com host, because (a) it is a
+;; property of *this* transport (the native libcurl backend never needs
+;; it) and (b) fen's anthropic provider exposes no extra-header seam to set
+;; it from the provider layer. This is interim: the durable fix is a
+;; provider extra-headers / browser-direct option upstream in fen (filed as
+;; an upstream ask, per docs/architecture/seams.md's "widen the seam in
+;; fen" rule); once that lands, this moves to the provider spec and this
+;; host-keyed special-case is deleted.
 ;;
 ;; Install by pre-setting package.loaded["fen.util.http.backend"] from the
 ;; runtime bootstrap (same mechanism fen.testing.stub-http! uses), not by
@@ -63,10 +72,27 @@
 (local default-connect-timeout-ms 30000)
 (local default-idle-timeout-ms 60000)
 
+;; Add the browser-only CORS opt-in header for direct-from-page Anthropic
+;; calls (see this file's header comment for why it lives here, not the
+;; provider). Keyed on the Anthropic host so no other provider is touched;
+;; never overwrites a header the caller already set.
+(local ANTHROPIC-DIRECT-HEADER :anthropic-dangerous-direct-browser-access)
+
+(fn anthropic-host? [url]
+  (not= nil (string.find (tostring (or url "")) "^https?://api%.anthropic%.com")))
+
+(fn transport-headers [opts]
+  (let [headers {}]
+    (each [k v (pairs (or opts.headers {}))] (tset headers k v))
+    (when (and (anthropic-host? opts.url)
+               (= nil (. headers ANTHROPIC-DIRECT-HEADER)))
+      (tset headers ANTHROPIC-DIRECT-HEADER "true"))
+    headers))
+
 (fn translate [opts]
   {:method (or opts.method :GET)
    :url opts.url
-   :headers opts.headers
+   :headers (transport-headers opts)
    :body opts.body
    :timeoutMs (or opts.timeout-ms default-timeout-ms)
    :connectTimeoutMs (or opts.connect-timeout-ms default-connect-timeout-ms)
