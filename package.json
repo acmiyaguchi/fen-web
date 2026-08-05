@@ -10,8 +10,8 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "build": "npm run build -w @fen-web/bindings -w @fen-web/runtime --if-present && npm run build --workspaces --if-present",
+    "test": "npm run build && npm run test --workspaces --if-present"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
