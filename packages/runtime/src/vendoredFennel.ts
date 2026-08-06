@@ -9,7 +9,7 @@ export const FENNEL_VERSION = "1.6.0";
 // importing this module has no side effects; the browser build reaches this
 // file only through the lazy `import()` in index.ts's Node-default path,
 // which the browser never executes (it passes opts.fennelSource / a cjson
-// preload). See docs/apps/demo.md's bundler note.
+// preload). See docs/apps/web.md's bundler note.
 function vendorPath(name: string): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   // dist/vendoredFennel.js -> ../vendor/<name>

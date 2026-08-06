@@ -51,7 +51,7 @@ extension points get filled without touching `fen/`.
   - [tools.md](platform/tools.md) — issue #4
   - [sessions.md](platform/sessions.md) — issue #14
 - **apps/** — the two delivery shapes.
-  - [demo.md](apps/demo.md) — issues #6-#9
+  - [demo.md](apps/web.md) — issues #6-#9
   - [extension.md](apps/extension.md) — deferred, fen#100 / issue #11
 - **[integration.md](integration.md)** — the #5 milestone test and the
   opt-in live Codex e2e harness (`packages/integration`).
@@ -74,15 +74,15 @@ page-load compile cost (#19), cooperative-retry busy-spin backpressure
 (#20), `require`/pump reentrancy (#21), and formalizing the two host IO
 profiles (#22, see [platform/shims.md](platform/shims.md)).
 
-`apps/demo`'s DOM presenter (#6) has landed: the `host.dom-apply` primitive
+`apps/web`'s DOM presenter (#6) has landed: the `host.dom-apply` primitive
 (`packages/bindings/src/dom`, see [bindings/dom.md](bindings/dom.md)) plus a
-Fennel DOM presenter (`apps/demo/fnl/fen_web/demo`, see
-[apps/demo.md](apps/demo.md)) that reuses fen's compositional panel/fragment
+Fennel DOM presenter (`apps/web/fnl/fen_web/web`, see
+[apps/web.md](apps/web.md)) that reuses fen's compositional panel/fragment
 model and diffs one batched mutation list per frame. The BYO-key single-page
-shell (#7) has landed on top: `apps/demo` is now a Vite-bundled working
+shell (#7) has landed on top: `apps/web` is now a Vite-bundled working
 page that boots the runtime + bindings + presenter and runs an Anthropic
 turn end to end, with API keys stored browser-locally in IndexedDB. The
-rest of `apps/demo` (#8-#9, iframe preview, starter project) and
+rest of `apps/web` (#8-#9, iframe preview, starter project) and
 `apps/extension` (#11, deferred, trails the demo) remain design-only. See
 the top-level [README.md](../README.md) for the architecture summary and
 layout.

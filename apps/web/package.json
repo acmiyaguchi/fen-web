@@ -1,0 +1,24 @@
+{
+  "name": "@fen-web/web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run typecheck && npm run test:node && npm run test:fnl",
+    "test:node": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\"",
+    "test:fnl": "cd ../.. && nix develop -c busted --loaders=lua,fennel --helper=apps/web/tests/helper.lua --pattern=_test apps/web/tests"
+  },
+  "dependencies": {
+    "@fen-web/bindings": "*",
+    "@fen-web/runtime": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3",
+    "vite": "^7.3.6"
+  }
+}

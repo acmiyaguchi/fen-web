@@ -13,7 +13,7 @@ import type { HostKv } from "./types.js";
 // IndexedDB access the Lua coroutine cannot await, so seeding belongs here.
 //
 // The starter files themselves are still real, reviewable source under
-// apps/demo/starter/ and WHICH files ship is still application choice
+// apps/web/starter/ and WHICH files ship is still application choice
 // (buildStarterFiles). This module only owns the durable seed *mechanism*:
 // validate the bundle, and commit it once, atomically, only when the store
 // holds no user work — gated on a seed-complete marker written last within the
@@ -56,7 +56,7 @@ export function validateStarterFiles(files: unknown): Record<string, string> {
   if (entries.length === 0) {
     throw new Error(
       "fen-web starter seed: starter bundle is empty — the curated starter " +
-        "project is required for this feature (expected apps/demo/starter/ " +
+        "project is required for this feature (expected apps/web/starter/ " +
         "index.html + app.js + styles.css). Check the bundler glob / staging.",
     );
   }

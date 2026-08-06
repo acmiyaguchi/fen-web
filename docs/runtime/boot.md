@@ -202,7 +202,7 @@ top level and defers the disk-backed defaults: `fennelSource` falls back to
 a lazy `import("./vendoredFennel.js")` only when the caller omits it, and
 the built-in `cjson` preload is disk-loaded only when the caller passes no
 `cjson` entry in `opts.preload`. The browser (see
-[../apps/demo.md](../apps/demo.md)) always supplies both from bundled raw
+[../apps/web.md](../apps/web.md)) always supplies both from bundled raw
 text, so those readers never run in-page; the demo's Vite config aliases
 the residual `node:*` specifiers (reachable only through the never-taken
 lazy `import`) to a throwing stub so Rollup can still resolve them.

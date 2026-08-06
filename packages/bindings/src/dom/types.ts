@@ -1,6 +1,6 @@
 // host.dom-apply: a batched DOM mutation/query surface (see the fen-web
 // architecture table in the top-level README). The Fennel DOM presenter
-// (apps/demo, fen-web#6) computes a fragment diff each frame and hands the
+// (apps/web, fen-web#6) computes a fragment diff each frame and hands the
 // resulting mutation list to `host.dom-apply` as ONE batched call, plus a
 // separate query call to drain user-input events. No layout, styling, or
 // diff policy lives in TS — that stays in Fennel, mirroring how host.kv

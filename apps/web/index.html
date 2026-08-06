@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>fen-web demo</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <span class="topbar-title">fen-web demo</span>
+      <button id="fen-open-settings" type="button" class="topbar-settings">
+        Settings
+      </button>
+    </header>
+
+    <!-- BYO-key settings gate (shell chrome). The agent UI itself is
+         rendered by the Fennel DOM presenter into #fen-app. -->
+    <div id="fen-settings" class="settings-overlay"></div>
+
+    <!-- Mount point for the DOM presenter (host.dom-apply builds its
+         skeleton under this id; see apps/web/fnl/fen_web/web). -->
+    <main id="fen-app" class="fen-app"></main>
+
+    <!-- Mount point for the sandboxed preview iframe (host.preview creates
+         the <iframe sandbox="allow-scripts"> under this id; fen-web#8). The
+         agent renders the IndexedDB app tree here and drives it over a
+         postMessage RPC — never with allow-same-origin. -->
+    <aside id="fen-preview" class="fen-preview"></aside>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
