@@ -12,7 +12,7 @@
 ;; apps/demo/src/bootTurn.test.ts. What THIS Fennel spec owns is the app-facing
 ;; contract that couldn't be checked before: the seeded bytes, written into the
 ;; same "fs:" keyspace the seeder targets, assemble and render through
-;; preview.refresh / build-page out of the box.
+;; preview_refresh / build-page out of the box.
 ;;
 ;; The starter files are real, reviewable source under apps/demo/starter/. This
 ;; spec reads them straight off the tree (busted runs with cwd at the repo
@@ -105,11 +105,11 @@
                 (assert.is_truthy (string.find page "window.todoApp" 1 true))
                 (assert.is_nil (string.find page "src=\"app.js\"" 1 true))))))))
 
-    (describe "seeded entry renders through preview.refresh"
+    (describe "seeded entry renders through preview_refresh"
       (fn []
         (it "assembles the seeded app into host.preview via set-html"
           (fn []
-            ;; Drive the actual preview.refresh tool (not just build-page) over
+            ;; Drive the actual preview_refresh tool (not just build-page) over
             ;; the seeded vfs and the FakePreview-style host, so the whole
             ;; refresh path -- entry resolution, same-tree inlining, and the
             ;; host.preview_set_html hand-off the agent relies on -- is covered,
@@ -118,7 +118,7 @@
                   prev (make-preview)]
               (seed-vfs! kv)
               (install-host! kv prev)
-              (let [refresh (tool-named :preview.refresh)
+              (let [refresh (tool-named :preview_refresh)
                     r (refresh.execute {} {} nil)
                     page prev.html]
                 (assert.is_false r.is-error?)
@@ -142,7 +142,7 @@
                   prev (make-preview)]
               (seed-vfs! kv)
               (install-host! kv prev)
-              (let [refresh (tool-named :preview.refresh)
+              (let [refresh (tool-named :preview_refresh)
                     r (refresh.execute {:entry "/index.html"} {} nil)]
                 (assert.is_false r.is-error?)
                 (assert.is_truthy (string.find prev.html "Starter todo" 1 true))))))))))

@@ -143,8 +143,8 @@
                   (table.insert names spec.name))
                 (table.sort names)
                 (assert.are.same
-                  [:preview.click :preview.eval :preview.fill
-                   :preview.query :preview.refresh :preview.screenshot]
+                  [:preview_click :preview_eval :preview_fill
+                   :preview_query :preview_refresh :preview_screenshot]
                   names)))))))
 
     (describe "refresh tool"
@@ -157,12 +157,12 @@
               (put-file kv "/index.html" "<body>app here</body>")
               (let [tool (do (var t nil)
                              (preview.register
-                               {:register (fn [_ s] (when (= s.name :preview.refresh) (set t s)))})
+                               {:register (fn [_ s] (when (= s.name :preview_refresh) (set t s)))})
                              t)
                     r (tool.execute {} {} nil)]
                 (assert.is_false r.is-error?)
                 (assert.is_truthy (string.find prev.html "app here" 1 true))
-                ;; the injected page is what preview.refresh built (no RPC yet)
+                ;; the injected page is what preview_refresh built (no RPC yet)
                 (assert.are.equal 0 (length prev.requests))))))))
 
     (describe "RPC-backed tools"
@@ -175,10 +175,10 @@
               {:register (fn [_ s] (when (= s.name name) (set t s)))})
             (values t prev)))
 
-        (it "preview.query relays the selector and returns the JSON result"
+        (it "preview_query relays the selector and returns the JSON result"
           (fn []
             (let [(tool prev)
-                  (tool-named :preview.query
+                  (tool-named :preview_query
                               (fn [req] {:ok true :value {:count 1 :found true}}))
                   r (tool.execute {:selector "#app"} {} nil)]
               (assert.is_false r.is-error?)
@@ -186,37 +186,37 @@
               (assert.are.equal "#app" (. prev.requests 1 :selector))
               (assert.is_truthy (string.find (text-of r) "\"count\"" 1 true)))))
 
-        (it "preview.click reports an RPC failure as a tool error"
+        (it "preview_click reports an RPC failure as a tool error"
           (fn []
             (let [(tool _prev)
-                  (tool-named :preview.click
+                  (tool-named :preview_click
                               (fn [_req] {:ok false :error "no element matches #x"}))
                   r (tool.execute {:selector "#x"} {} nil)]
               (assert.is_true r.is-error?)
               (assert.is_truthy (string.find (text-of r) "no element matches" 1 true)))))
 
-        (it "preview.fill sends the selector and value"
+        (it "preview_fill sends the selector and value"
           (fn []
             (let [(tool prev)
-                  (tool-named :preview.fill (fn [_req] {:ok true :value {:filled true}}))
+                  (tool-named :preview_fill (fn [_req] {:ok true :value {:filled true}}))
                   r (tool.execute {:selector "#name" :value "ada"} {} nil)]
               (assert.is_false r.is-error?)
               (assert.are.equal "#name" (. prev.requests 1 :selector))
               (assert.are.equal "ada" (. prev.requests 1 :value)))))
 
-        (it "preview.eval returns the serialized value"
+        (it "preview_eval returns the serialized value"
           (fn []
             (let [(tool prev)
-                  (tool-named :preview.eval (fn [_req] {:ok true :value 42}))
+                  (tool-named :preview_eval (fn [_req] {:ok true :value 42}))
                   r (tool.execute {:expr "6*7"} {} nil)]
               (assert.is_false r.is-error?)
               (assert.are.equal "6*7" (. prev.requests 1 :expr))
               (assert.is_truthy (string.find (text-of r) "42" 1 true)))))
 
-        (it "preview.screenshot returns the canvas data URL string"
+        (it "preview_screenshot returns the canvas data URL string"
           (fn []
             (let [(tool _prev)
-                  (tool-named :preview.screenshot
+                  (tool-named :preview_screenshot
                               (fn [_req] {:ok true :value {:dataUrl "data:image/png;base64,AAA"}}))
                   r (tool.execute {} {} nil)]
               (assert.is_false r.is-error?)
@@ -231,7 +231,7 @@
               (install-host! (make-kv) prev)
               (var tool nil)
               (preview.register
-                {:register (fn [_ s] (when (= s.name :preview.query) (set tool s)))})
+                {:register (fn [_ s] (when (= s.name :preview_query) (set tool s)))})
               (let [(ok? err) (pcall tool.execute {:selector "#x"} {} nil)]
                 (assert.is_false ok?)
                 (assert.is_truthy (string.find (tostring err) "cooperative" 1 true))))))
@@ -239,7 +239,7 @@
         (it "times out (structured error + dispose) when the preview never replies"
           (fn []
             ;; A preview whose poll never reports done \u2014 e.g. a blank iframe
-            ;; driven before preview.refresh. With a yield-fn present, the loop
+            ;; driven before preview_refresh. With a yield-fn present, the loop
             ;; must not spin forever: the Fennel-side liveness bound disposes
             ;; and returns a structured {:ok false :error ...} rather than
             ;; hanging the turn coroutine.
@@ -255,7 +255,7 @@
                                     {:max-polls 3})]
                 (assert.is_false r.ok)
                 (assert.is_truthy (string.find r.error "timed out" 1 true))
-                (assert.is_truthy (string.find r.error "preview.refresh" 1 true))
+                (assert.is_truthy (string.find r.error "preview_refresh" 1 true))
                 ;; bounded: it yielded a few times then gave up, and cleaned up.
                 (assert.is_true (<= yields 3))
                 (assert.are.equal 1 (length disposed))))))
@@ -269,7 +269,7 @@
               (install-host! (make-kv) prev)
               (var tool nil)
               (preview.register
-                {:register (fn [_ s] (when (= s.name :preview.query) (set tool s)))})
+                {:register (fn [_ s] (when (= s.name :preview_query) (set tool s)))})
               ;; Drive M.rpc! straight to the timeout branch by exhausting the
               ;; poll ceiling on the very first poll.
               (let [orig preview.rpc!]

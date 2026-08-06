@@ -88,7 +88,7 @@
       "<title>fen-web preview</title></head><body>"
       "<p style=\"font-family:sans-serif;color:#555\">"
       "No preview entry found. Create " entry " in the workspace, then run "
-      "preview.refresh.</p></body></html>"))
+      "preview_refresh.</p></body></html>"))
 
 ;; @doc fen_web.demo.preview.html.build-page
 ;; kind: function

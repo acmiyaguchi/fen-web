@@ -1,8 +1,8 @@
 ;; Sandboxed-iframe preview tools (fen-web#8): the differentiator from
 ;; fen#99 — the agent drives the very app it just built in the virtual FS.
 ;;
-;; This is a demo-only extension: it registers preview.refresh / preview.query
-;; / preview.click / preview.fill / preview.eval / preview.screenshot through
+;; This is a demo-only extension: it registers preview_refresh / preview_query
+;; / preview_click / preview_fill / preview_eval / preview_screenshot through
 ;; the ordinary public :tool register kind (fen.core.extensions.register.tool),
 ;; loaded via the per-owner manifest loader (fen_web.demo.boot.load-extension!),
 ;; exactly like the file tools. Owner cleanup and reload therefore apply, and
@@ -17,7 +17,7 @@
 ;; host.fetch, which bounds itself with host-side timeouts surfaced as
 ;; poll.done+error, host.preview's poll has no host-side timeout, so M.rpc!
 ;; enforces the liveness bound in Fennel: a preview that never replies (e.g.
-;; a blank iframe driven before preview.refresh) surfaces a structured
+;; a blank iframe driven before preview_refresh) surfaces a structured
 ;; {:ok false :error ...} rather than yielding the turn forever.
 ;;
 ;; SECURITY: user JS in the iframe cannot reach the parent FS, API key, or
@@ -34,7 +34,7 @@
 
 ;; Liveness bound for a single preview RPC (see the header note): wall-clock
 ;; deadline plus a hard poll ceiling so a preview that never replies (e.g. a
-;; blank iframe driven before preview.refresh) surfaces a structured error
+;; blank iframe driven before preview_refresh) surfaces a structured error
 ;; rather than yielding the turn coroutine forever. Overridable per call via
 ;; the ?opts arg (tests pass a tiny :max-polls to exercise the timeout path).
 (local DEFAULT-TIMEOUT-S 30)
@@ -65,7 +65,7 @@
             (do (host.preview_rpc_dispose id)
                 (set result (or poll.result {:ok false :error "empty preview result"})))
             ;; Liveness cap: a preview that never answers (a blank iframe
-            ;; driven before preview.refresh) would otherwise poll forever.
+            ;; driven before preview_refresh) would otherwise poll forever.
             ;; Surface the timeout as the same {:ok false :error ...} shape a
             ;; real RPC failure uses, so the tools return a structured error.
             (or (>= (os.time) deadline) (>= polls max-polls))
@@ -73,7 +73,7 @@
                 (set result
                      {:ok false
                       :error (.. "preview RPC timed out with no reply — did you "
-                                 "run preview.refresh first? A blank preview "
+                                 "run preview_refresh first? A blank preview "
                                  "never answers.")}))
             ?yield-fn (?yield-fn)
             (do (host.preview_rpc_dispose id)
@@ -90,7 +90,7 @@
 ;; --- Tool specs ---------------------------------------------------------
 
 (local refresh-tool
-  {:name :preview.refresh
+  {:name :preview_refresh
    :label "Preview refresh"
    :snippet "Render the workspace app into the preview iframe"
    :description (.. "Render (or re-render) the workspace app into the sandboxed "
@@ -115,7 +115,7 @@
                                  " — showing a placeholder page")))))})
 
 (local query-tool
-  {:name :preview.query
+  {:name :preview_query
    :label "Preview query"
    :snippet "Inspect a preview element by CSS selector"
    :description (.. "Query the running preview app: return whether a CSS selector "
@@ -132,7 +132,7 @@
                   (rpc-result->tool (M.rpc! {:method :query :selector args.selector} ?yield))))})
 
 (local click-tool
-  {:name :preview.click
+  {:name :preview_click
    :label "Preview click"
    :snippet "Click a preview element by CSS selector"
    :description "Click the first element matching a CSS selector in the preview app."
@@ -146,7 +146,7 @@
                   (rpc-result->tool (M.rpc! {:method :click :selector args.selector} ?yield))))})
 
 (local fill-tool
-  {:name :preview.fill
+  {:name :preview_fill
    :label "Preview fill"
    :snippet "Set a preview input's value by CSS selector"
    :description (.. "Set the value of the first input/textarea/select matching a "
@@ -166,7 +166,7 @@
                              :value (or args.value "")} ?yield))))})
 
 (local eval-tool
-  {:name :preview.eval
+  {:name :preview_eval
    :label "Preview eval"
    :snippet "Evaluate a JS expression in the preview app"
    :description (.. "Evaluate a JavaScript expression inside the sandboxed "
@@ -184,7 +184,7 @@
                   (rpc-result->tool (M.rpc! {:method :eval :expr args.expr} ?yield))))})
 
 (local screenshot-tool
-  {:name :preview.screenshot
+  {:name :preview_screenshot
    :label "Preview screenshot"
    :snippet "Capture a preview canvas as a data URL"
    :description (.. "Capture a <canvas> in the preview app as a PNG data URL "
@@ -211,7 +211,7 @@
 ;; @doc fen_web.demo.preview.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the demo-only preview.refresh/query/click/fill/eval/screenshot tools through the per-owner :tool register kind, with :always exposure so the agent can drive its freshly built app without a tool_search gate. Registers fresh spec tables so the shared module-level specs are never mutated.
+;; summary: Register the demo-only preview_refresh/query/click/fill/eval/screenshot tools through the per-owner :tool register kind, with :always exposure so the agent can drive its freshly built app without a tool_search gate. Registers fresh spec tables so the shared module-level specs are never mutated.
 ;; tags: preview tools register extension
 (fn M.register [api]
   (each [_ spec (ipairs tool-specs)]

@@ -75,11 +75,11 @@ see the top-level [README.md](../../README.md) non-goals.
   as raw text and passed to `createFenRuntime` so its Node-only `fs`
   readers never run in-page (see [../runtime/boot.md](../runtime/boot.md)).
 - **#8 — sandboxed iframe preview + `preview.*` tools (implemented).**
-  `preview.refresh` re-renders the IndexedDB tree into a sandboxed
+  `preview_refresh` re-renders the IndexedDB tree into a sandboxed
   `<iframe sandbox="allow-scripts">` (never `allow-same-origin`).
-  `preview.query(selector)`, `preview.click(selector)`,
-  `preview.fill(selector, value)`, `preview.eval(expr)` drive the running
-  app via a `postMessage` RPC channel; `preview.screenshot` renders a
+  `preview_query(selector)`, `preview_click(selector)`,
+  `preview_fill(selector, value)`, `preview_eval(expr)` drive the running
+  app via a `postMessage` RPC channel; `preview_screenshot` renders a
   canvas → dataURL. The RPC is the new `host.preview` primitive
   (`packages/bindings/src/preview`, [../bindings/preview.md](../bindings/preview.md));
   the page assembly (rendering the vfs tree, inlining same-tree
@@ -113,11 +113,11 @@ see the top-level [README.md](../../README.md) non-goals.
   `fs:` file exists; the marker is written last within the same transaction,
   and the gate is a cheap marker `get` + one-step key cursor, never a full
   workspace walk. The seeded `/index.html` renders through the existing
-  `preview.refresh`/`build-page` assembler out of the box (same-tree
+  `preview_refresh`/`build-page` assembler out of the box (same-tree
   `styles.css`/`app.js` inlined). Coverage:
   `packages/bindings/src/kv/starterSeed.test.ts` (validation, empty-seed,
   idempotence, no-clobber), `apps/demo/tests/seed_test.fnl` (the seeded
-  entry renders through both `build-page` and `preview.refresh`), and the
+  entry renders through both `build-page` and `preview_refresh`), and the
   end-to-end seed assertion in `apps/demo/src/bootTurn.test.ts`.
 
 ## Sandboxing invariant
