@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createFenRuntime, FENNEL_VERSION } from "./index.js";
+import { createFenRuntime, FENNEL_VERSION, loadFenTree } from "./index.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fenMakefile = path.resolve(here, "..", "..", "..", "fen", "Makefile");
+const fenUtilSrc = path.resolve(here, "..", "..", "..", "fen", "packages", "util", "src");
+const fenCoreSrc = path.resolve(here, "..", "..", "..", "fen", "packages", "core", "src");
 
 function readMakefileFennelVer(): string {
   const text = readFileSync(fenMakefile, "utf8");
@@ -130,16 +132,43 @@ test("built-in cjson stub: sparse arrays encode with null padding instead of deg
   }
 });
 
-test("built-in fen.util.process stub exposes monotonic-ms via host now_ms", async () => {
-  const rt = await createFenRuntime({ sources: new Map() });
+test("built-in fen.util.clock stub exposes monotonic-ms via host now_ms", async () => {
+  const rt = await createFenRuntime({ sources: loadFenTree([fenUtilSrc]) });
   try {
     await rt.doString(`
-      local process = require("fen.util.process")
-      __t = process["monotonic-ms"]()
+      local clock = require("fen.util.clock")
+      __t = clock["monotonic-ms"]()
     `);
     const t = rt.lua.global.get("__t");
     assert.equal(typeof t, "number");
     assert.ok(t >= 0);
+  } finally {
+    rt.close();
+  }
+});
+
+test("browser path and storage seam fulfillments use the host KV view", async () => {
+  const values = new Map<string, string>([["env/apikey/ANTHROPIC_API_KEY", "secret"]]);
+  const kv = {
+    get: (key: string) => values.get(key),
+    put: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+  const rt = await createFenRuntime({
+    sources: loadFenTree([fenUtilSrc, fenCoreSrc]),
+    host: { kv },
+  });
+  try {
+    await rt.doString(`
+      local path = require("fen.util.path")
+      local storage = require("fen.core.storage")
+      __api_key = path.getenv("ANTHROPIC_API_KEY")
+      storage["write!"]("/tmp/settings.json", "{}")
+      __stored = storage.read("/tmp/settings.json")
+    `);
+    assert.equal(rt.lua.global.get("__api_key"), "secret");
+    assert.equal(rt.lua.global.get("__stored"), "{}");
   } finally {
     rt.close();
   }
