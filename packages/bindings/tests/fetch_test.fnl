@@ -59,18 +59,26 @@
             (assert.is_truthy (string.find err "cooperative mode" 1 true)))
           (set _G.__fen_host nil))))
 
-    (it "applies fen's default timeouts when the caller doesn't set them"
+    (it "public fen.util.http applies timeout defaults before dispatching to fetch"
       (fn []
         (let [fetch (require :fen.util.http.backends.fetch)
               host (make-fake-host [{:chunks [] :done true :status 200 :headers {} :body ""}])]
           (set _G.__fen_host host)
-          (fetch.request {:method "GET" :url "https://example.com" :yield (fn [])})
+          ;; Install the browser backend at the public seam, then exercise the
+          ;; v0.17 timeout owner rather than asking the backend to reimplement
+          ;; the policy.
+          (tset package.loaded :fen.util.http.backend fetch)
+          (tset package.loaded :fen.util.http nil)
+          (let [http (require :fen.util.http)]
+            (http.request {:method "GET" :url "https://example.com" :yield (fn [])}))
           (assert.are.equal 600000 host._state.start-opts.timeoutMs)
           (assert.are.equal 30000 host._state.start-opts.connectTimeoutMs)
           (assert.are.equal 60000 host._state.start-opts.idleTimeoutMs)
+          (tset package.loaded :fen.util.http nil)
+          (tset package.loaded :fen.util.http.backend nil)
           (set _G.__fen_host nil))))
 
-    (it "honors caller-supplied timeouts over the defaults"
+    (it "passes caller-supplied timeouts through the fetch backend"
       (fn []
         (let [fetch (require :fen.util.http.backends.fetch)
               host (make-fake-host [{:chunks [] :done true :status 200 :headers {} :body ""}])]

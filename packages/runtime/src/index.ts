@@ -29,10 +29,10 @@ export interface FenRuntimeOptions {
   /**
    * Exposed to the VM as the global `__fen_host` before any require runs.
    * Merged over the runtime's default host helpers (`now_ms`, used by the
-   * built-in fen.util.process stub) -- caller-supplied keys win.
+   * built-in clock seam fulfillment) -- caller-supplied keys win.
    */
   host?: Record<string, unknown>;
-  /** Extra/overriding package.preload entries, merged over the built-in cjson/fen.util.process stubs (caller wins on key collision). */
+  /** Extra/overriding package.preload entries, merged over the built-in JSON and browser seam fulfillments (caller wins on key collision). */
   preload?: Record<string, PreloadEntry>;
   /** Vendored fennel-1.6.0.lua source. Defaults to reading packages/runtime/vendor (Node only). */
   fennelSource?: string;
@@ -183,8 +183,8 @@ async function createCoroutinePump(lua: LuaEngine, fnSource: string): Promise<Co
 
 /**
  * Boots a wasmoon (Lua 5.4) VM, boots the vendored Fennel 1.6.0 compiler
- * inside it, installs the __fen_host global, built-in cjson/fen.util.process
- * stubs plus any caller preloads, and installs a custom package.searchers
+ * inside it, installs the __fen_host global, built-in JSON and browser seam
+ * fulfillments plus any caller preloads, and installs a custom package.searchers
  * entry resolving from `opts.sources` per fen-web#16's decision (hybrid:
  * pinned core precompiled at bundle time is a later optimization -- this
  * runtime always compiles-on-require through the in-VM Fennel compiler,

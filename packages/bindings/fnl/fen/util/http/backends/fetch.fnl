@@ -1,10 +1,9 @@
 ;; Browser fetch() backend for fen.util.http, backing fen-web (fen#99).
 ;;
-;; Mirrors fen.util.http.backends.native (the libcurl backend): this file
-;; is the sole translation point between fen's kebab-case opts/results
+;; This is the translation point between fen's kebab-case opts/results
 ;; (`:timeout-ms`, `:on-chunk`, `:accumulate-body?`, ...) and the JS host
-;; primitive, and it owns policy (timeout defaults, accumulate-body?,
-;; error shapes) — the JS side (packages/bindings) is transport only.
+;; primitive. Timeout defaults and blocking-capability policy belong to
+;; fen.util.http.request; this backend only transports the resolved fields.
 ;;
 ;; Provider-level headers generally belong to the Fennel provider/policy
 ;; layer that builds `opts.headers` before calling fen.util.http.request,
@@ -65,15 +64,8 @@
 (fn host []
   (or _G.__fen_host (request-fetch-error "__fen_host is not installed")))
 
-;; Match fen.util.http.init's documented defaults (also the native
-;; backend's defaults, sourced from fen_http.c): overall 600000ms,
-;; connect 30000ms, idle-watchdog 60000ms. The TS transport
-;; (packages/bindings) stays policy-free and only sees the resolved
-;; values below.
-(local default-timeout-ms 600000)
-(local default-connect-timeout-ms 30000)
-(local default-idle-timeout-ms 60000)
-
+;; Timeout fields are filled by fen.util.http.request at the seam owner;
+;; backends receive them as always-present values (fen#469).
 ;; Add the browser-only CORS opt-in header for direct-from-page Anthropic
 ;; calls (see this file's header comment for why it lives here, not the
 ;; provider). Keyed on the Anthropic host so no other provider is touched;
@@ -103,9 +95,9 @@
    :url opts.url
    :headers (transport-headers opts)
    :body opts.body
-   :timeoutMs (or opts.timeout-ms default-timeout-ms)
-   :connectTimeoutMs (or opts.connect-timeout-ms default-connect-timeout-ms)
-   :idleTimeoutMs (or opts.idle-timeout-ms default-idle-timeout-ms)
+   :timeoutMs opts.timeout-ms
+   :connectTimeoutMs opts.connect-timeout-ms
+   :idleTimeoutMs opts.idle-timeout-ms
    ;; Tell the host whether to bound its own body accumulation (see
    ;; webFetch.ts's ACCUMULATE_BODY_CAP): keeps the JS side from holding a
    ;; full unbounded body when the caller only wants a diagnostics head.
@@ -147,4 +139,9 @@
             (opts.yield))))
     result))
 
-{: request}
+;; Capability declaration (#471): the browser transport is structurally
+;; cooperative-only. fen.util.http.request uses this to return its canonical
+;; capability error before dispatch when a caller omits opts.yield.
+(local capabilities {:blocking? false})
+
+{: request : capabilities}

@@ -27,7 +27,7 @@ test("require fen.core.types works", async () => {
   }
 });
 
-test("require fen.core.agent works (33-module subgraph) with built-in stubs", async () => {
+test("require fen.core.agent works with browser seam fulfillments", async () => {
   const rt = await createFenRuntime({ sources: sources() });
   try {
     const mod = await rt.require("fen.core.agent");

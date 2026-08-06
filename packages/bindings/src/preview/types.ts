@@ -8,7 +8,7 @@
 // poll for its result, and yield the turn coroutine between polls rather
 // than passing a callback that would resume Lua across a C-call boundary.
 //
-// SECURITY INVARIANT (docs/apps/demo.md, docs/bindings/preview.md): the
+// SECURITY INVARIANT (docs/apps/web.md, docs/bindings/preview.md): the
 // preview iframe runs with `sandbox="allow-scripts"` and NO
 // `allow-same-origin`. User-generated JS in the iframe therefore runs in an
 // opaque origin and cannot reach the parent frame's virtual FS, the API key

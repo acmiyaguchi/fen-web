@@ -1,10 +1,10 @@
 # dom (`host.dom-apply`)
 
 Batched DOM mutation/query surface — the seam the browser DOM presenter
-(`apps/demo`, issue #6) renders through. Status: implemented in
+(`apps/web`, issue #6) renders through. Status: implemented in
 `packages/bindings/src/dom`. No layout, styling, or diff policy lives in TS;
-that stays in Fennel (`apps/demo/fnl/fen_web/demo`, see
-[../apps/demo.md](../apps/demo.md)), the same way `host.kv` keeps filesystem
+that stays in Fennel (`apps/web/fnl/fen_web/web`, see
+[../apps/web.md](../apps/web.md)), the same way `host.kv` keeps filesystem
 semantics out of its binding.
 
 ## Why one batched call, not per-mutation
@@ -73,8 +73,8 @@ not the browser, owns submission.
 
 Both share the single op dispatcher `applyDomOps(adapter, ops)`
 (`applyOps.ts`) so the semantics can't drift between them. The Fennel side
-has a parallel table-backed double in `apps/demo/tests/support.fnl`.
+has a parallel table-backed double in `apps/web/tests/support.fnl`.
 
 See also: [host-protocol.md](host-protocol.md),
-[../apps/demo.md](../apps/demo.md),
+[../apps/web.md](../apps/web.md),
 [../architecture/seams.md](../architecture/seams.md).

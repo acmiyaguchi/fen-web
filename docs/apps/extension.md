@@ -41,4 +41,4 @@ hasn't been verified against actual MV3 kill/restart behavior yet.
 
 No code, no detailed design beyond the fen#99 sketch. Do not build against
 this page as a contract — it records intent only. See
-[demo.md](demo.md) for the shape that ships first.
+[web.md](web.md) for the shape that ships first.

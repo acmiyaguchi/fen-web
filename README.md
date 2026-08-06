@@ -7,7 +7,7 @@ Tracks [fen#99](https://github.com/acmiyaguchi/fen/issues/99).
 
 Two delivery shapes share one core:
 
-- **`apps/demo`** — self-contained single page: IndexedDB-backed virtual FS, sandboxed iframe preview the agent can drive (query/click/fill/assert), BYO API key.
+- **`apps/web`** — self-contained single page: IndexedDB-backed virtual FS, sandboxed iframe preview the agent can drive (query/click/fill/assert), BYO API key.
 - **`apps/extension`** — MV3 browser extension: cross-origin fetch and real tab/DOM access via a background service worker and content scripts (trails the demo; see fen#100).
 
 ## Architecture
@@ -36,7 +36,7 @@ If a need can't be met by implementing an existing seam, that's a request to wid
 fen/                    # submodule, pinned to a fen release tag
 packages/bindings/      # TS host primitives (host.fetch, host.kv, host.dom-apply, ...)
 packages/runtime/       # wasmoon boot: mount fen core, Fennel bootstrap, host table wiring
-apps/demo/              # single-page demo (HTML shell + fnl/ tree)
+apps/web/              # single-page demo (HTML shell + fnl/ tree)
 apps/extension/         # MV3 extension (manifest + fnl/ tree)
 ```
 

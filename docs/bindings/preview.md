@@ -3,7 +3,7 @@
 The sandboxed-iframe preview seam (fen-web#8): the agent drives the app it
 just built in the virtual FS. Status: implemented in
 `packages/bindings/src/preview` (TS primitive) and
-`apps/demo/fnl/fen_web/demo/preview` (Fennel policy + tools). This is the
+`apps/web/fnl/fen_web/web/preview` (Fennel policy + tools). This is the
 differentiator from fen#99 — a coding agent that can *run* and inspect its
 own output, not just write files.
 
@@ -35,7 +35,7 @@ this RPC surface, which:
 This invariant must not be relaxed to fix a preview capability gap — widen
 the RPC surface instead. `packages/bindings/src/preview/webHostPreview.test.ts`
 asserts the sandbox attribute (no `allow-same-origin`) and that a reply from
-any foreign window source is rejected; `apps/demo/tests/preview_test.fnl`
+any foreign window source is rejected; `apps/web/tests/preview_test.fnl`
 asserts the page assembler never emits the stored API key.
 
 ## Op surface
@@ -73,7 +73,7 @@ host-side timeout and returns `{done:false}` forever if the iframe never
 replies. A blank iframe (created by driving a `preview.*` tool *before*
 `preview_refresh`, so `srcdoc` is never set) has no responder, so its RPCs
 never answer. To keep that from hanging the turn coroutine indefinitely,
-`fen_web.demo.preview.rpc!` enforces the liveness bound in Fennel — a
+`fen_web.web.preview.rpc!` enforces the liveness bound in Fennel — a
 wall-clock deadline plus a hard poll ceiling — and surfaces a timeout as the
 same `{ok=false, error=…}` shape a real RPC failure uses, so the driving
 tool returns a structured tool error instead of yielding forever.
@@ -81,7 +81,7 @@ tool returns a structured tool error instead of yielding forever.
 ## The `preview.*` tools
 
 Registered demo-only through the per-owner manifest loader
-(`fen_web.demo.boot.load-extension!` on `fen_web.demo.preview.manifest`),
+(`fen_web.web.boot.load-extension!` on `fen_web.web.preview.manifest`),
 via the ordinary public `:tool` register kind — the same path the file tools
 use, not an ad-hoc registration. All six use `:always` exposure so the agent
 can drive its app without a `tool_search` gate.
@@ -98,7 +98,7 @@ can drive its app without a `tool_search` gate.
 ## Rendering the IndexedDB tree
 
 `preview_refresh` is application policy, so it lives in Fennel
-(`fen_web.demo.preview.html`). The iframe has no network reach and no
+(`fen_web.web.preview.html`). The iframe has no network reach and no
 same-origin, so it can't resolve relative `<link>`/`<script src>` URLs;
 `build-page` inlines same-tree stylesheet and script references from the vfs
 into one self-contained document (absolute URLs are left untouched). The TS
@@ -112,12 +112,12 @@ primitive only sets the resulting `srcdoc` and injects the RPC responder
   `window`; owns the iframe and the message-source-validated poll bridge.
   Injectable `document`/`window`/`mountId` so it's testable off-DOM (there is
   no jsdom in this repo). The browser wires it in
-  `apps/demo/src/browserBoot.ts` under the `#fen-preview` mount.
+  `apps/web/src/browserBoot.ts` under the `#fen-preview` mount.
 - **`FakePreview`** (`fakePreview.ts`) — a synchronous in-memory double for
   Node tests, the way `ScriptedFetch`/`FakeDom` stand in for their bindings.
   The Fennel side has a parallel table-backed double in
-  `apps/demo/tests/preview_test.fnl`.
+  `apps/web/tests/preview_test.fnl`.
 
 See also: [host-protocol.md](host-protocol.md), [dom.md](dom.md),
-[../apps/demo.md](../apps/demo.md),
+[../apps/web.md](../apps/web.md),
 [../architecture/fennel-first.md](../architecture/fennel-first.md).
