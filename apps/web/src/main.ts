@@ -85,7 +85,8 @@ async function main(): Promise<void> {
     const form = el("form", { class: "settings-form", id: "settings-form" });
     form.append(el("h1", {}, "fen-web demo"));
 
-    // Provider selector (single option today; select keeps the seam open).
+    // Provider selector; adding a provider here stays a settings-only change
+    // once its boot registration is available.
     const providerRow = el("label", { class: "settings-row" }, "Provider");
     const select = el("select", { id: "provider-select" });
     for (const p of PROVIDERS) {
@@ -100,7 +101,7 @@ async function main(): Promise<void> {
       id: "api-key-input",
       type: "password",
       autocomplete: "off",
-      placeholder: "sk-ant-…",
+      placeholder: provider.id === "openai" ? "sk-…" : "sk-ant-…",
     });
     if (needsKey) {
       const keyRow = el("label", { class: "settings-row" }, `${provider.label} API key`);

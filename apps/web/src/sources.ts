@@ -58,7 +58,9 @@ const demoGlob = import.meta.glob("../fnl/**/*.fnl", {
  * Provider extensions live in fen as a *flat* directory whose real module
  * names come from a rockspec, not the directory layout (see
  * packages/integration/src/turn.test.ts's buildSources for the same
- * treatment). Map them by hand under their real dotted names.
+ * treatment). Map them by hand under their real dotted names. Both the
+ * Anthropic and public OpenAI adapters are bundled; Codex modules are
+ * loaded only for the dev-only provider path.
  */
 const anthropicGlob = import.meta.glob(
   "../../../fen/extensions/adapters/providers/anthropic/*.fnl",
