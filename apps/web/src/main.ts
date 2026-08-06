@@ -1,3 +1,4 @@
+import "./styles.css";
 import { PROVIDERS, SettingsStore, providerById } from "./settings.js";
 import { bootDemoInBrowser, type DemoSession } from "./browserBoot.js";
 
@@ -206,10 +207,10 @@ async function main(): Promise<void> {
   if (provider.envVar) {
     const existing = await store.getApiKey(provider.envVar);
     if (existing) await startSession(provider.id);
-  } else {
-    // Keyless (openai-codex): only auto-start when the dev-server auth
-    // bridge actually has credentials — otherwise the boot would crash
-    // in-VM instead of landing the user on the settings gate.
+  } else if (import.meta.env.DEV) {
+    // Keyless (openai-codex) is dev-only: only auto-start when the
+    // dev-server auth bridge actually has credentials. This branch is
+    // removed from production builds, where the provider is not offered.
     const bridged = await fetch("/__fen/codex-auth")
       .then((r) => r.ok)
       .catch(() => false);

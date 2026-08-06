@@ -100,8 +100,11 @@ function fenCodexAuthPlugin(): Plugin {
 // references Node built-ins for its Node-only vendor readers, which the demo
 // never runs; alias them to a throwing browser stub so Rollup can resolve
 // them (see src/nodeBuiltinStub.ts).
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: here,
+  // GitHub Pages serves the app below /fen-web/, while the dev server stays
+  // rooted at /. FEN_WEB_BASE is available for other deployment prefixes.
+  base: process.env.FEN_WEB_BASE ?? (mode === "development" ? "/" : "/fen-web/"),
   plugins: [fenCodexAuthPlugin()],
   resolve: {
     alias: {
@@ -138,4 +141,4 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
   },
-});
+}));
