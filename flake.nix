@@ -30,7 +30,7 @@
       in {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            nodejs_22
+            nodejs_24
             lua5_4
           ] ++ (with pkgs.lua54Packages; [
             fennel
