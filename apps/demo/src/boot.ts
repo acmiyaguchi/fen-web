@@ -97,9 +97,9 @@ export async function bootDemo(
   deps: DemoRuntimeDeps,
 ): Promise<DemoSession> {
   const provider = opts.provider ?? "anthropic";
-  if (provider !== "anthropic") {
+  if (provider !== "anthropic" && provider !== "openai-codex") {
     throw new Error(
-      `fen-web demo: unsupported provider "${provider}"; only "anthropic" is wired today`,
+      `fen-web demo: unsupported provider "${provider}"; only "anthropic" and "openai-codex" are wired today`,
     );
   }
 
@@ -115,8 +115,8 @@ export async function bootDemo(
       fetch_start: (fetchOpts: unknown) => poller.start(fetchOpts as never),
       fetch_poll: (id: number) => poller.poll(id),
       fetch_dispose: (id: number) => poller.dispose(id),
-      // host.preview: setHtml (preview.refresh) + the async postMessage RPC
-      // bridge (preview.query/click/fill/eval/screenshot). Mirrors the
+      // host.preview: setHtml (preview_refresh) + the async postMessage RPC
+      // bridge (preview_query/click/fill/eval/screenshot). Mirrors the
       // fetch start/poll/dispose shape so the Fennel tools yield between
       // polls (docs/bindings/preview.md).
       preview_set_html: (html: unknown) => deps.preview.setHtml(String(html)),

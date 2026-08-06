@@ -45,6 +45,30 @@ export async function bootDemoInBrowser(
   // retried rather than left permanently half-written. validateStarterFiles
   // fails boot loudly if the bundle is missing/malformed (it is required).
   await kvBacking.seedIfEmpty(validateStarterFiles(buildStarterFiles()));
+  // Dev-only Codex credential seed: the Vite dev server bridges the local
+  // fen CLI's ~/.config/fen/auth.json at /__fen/codex-auth (vite.config.ts).
+  // Seed it into the exact kv path openai_codex_keychain computes in-VM —
+  // the fs_kv getenv allowlist returns nil for HOME/XDG_CONFIG_HOME, so
+  // `(.. (or HOME "/") "/.config")` yields the double-slash path. Refreshed
+  // on every boot so a token rotated by the CLI wins over a stale copy.
+  if (import.meta.env.DEV) {
+    const res = await fetch("/__fen/codex-auth").catch(() => undefined);
+    if (res?.ok) {
+      await kvBacking.put("//.config/fen/auth.json", await res.text());
+    } else if (opts.provider === "openai-codex") {
+      // Fail here with the real reason instead of letting the VM boot and
+      // report a generic "no credentials in auth.json" later. 403 means a
+      // non-loopback client (the bridge is localhost-only by design).
+      throw new Error(
+        res?.status === 403
+          ? "openai-codex needs the page opened via localhost or a Tailscale " +
+            "address — the dev server only hands OAuth credentials to " +
+            "loopback/tailnet clients"
+          : "openai-codex needs local Codex credentials — run `fen --login openai-codex` first",
+      );
+    }
+    // Bridge missing/empty with anthropic selected: nothing to seed, fine.
+  }
   // fen's kv-backed seams (sessions, fs_kv) call kv synchronously; mirror
   // the store into a synchronous cache at boot (see SyncKvCache). Loading
   // here also captures the current stored API key for in-VM resolution.

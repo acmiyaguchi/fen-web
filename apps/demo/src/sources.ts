@@ -64,6 +64,10 @@ const anthropicGlob = import.meta.glob(
   "../../../fen/extensions/adapters/providers/anthropic/*.fnl",
   { query: "?raw", import: "default", eager: true },
 ) as RawGlob;
+const openaiGlob = import.meta.glob(
+  "../../../fen/extensions/adapters/providers/openai/*.fnl",
+  { query: "?raw", import: "default", eager: true },
+) as RawGlob;
 const providerSharedGlob = import.meta.glob(
   "../../../fen/extensions/adapters/providers/shared/*.fnl",
   { query: "?raw", import: "default", eager: true },
@@ -117,6 +121,7 @@ export function buildDemoSources(): Map<string, FenSource> {
   addTree(map, platformGlob, "packages/platform/fnl/");
   addTree(map, demoGlob, "/fnl/");
   addFlatPackage(map, anthropicGlob, "fen.extensions.provider_anthropic");
+  addFlatPackage(map, openaiGlob, "fen.extensions.provider_openai");
   addFlatPackage(map, providerSharedGlob, "fen.extensions.provider_shared");
   return map;
 }

@@ -58,10 +58,10 @@
   (.. "You are fen, a coding agent running entirely in the user's browser. "
       "The workspace is a virtual filesystem backed by IndexedDB; use the "
       "read/write/edit/find/grep/ls tools to work in it. When you build a web "
-      "app, render it with preview.refresh and drive it with preview.query/"
+      "app, render it with preview_refresh and drive it with preview_query/"
       "click/fill/eval/screenshot to verify it works. Be concise."))
 
-(local SUPPORTED-PROVIDERS {:anthropic true})
+(local SUPPORTED-PROVIDERS {:anthropic true :openai-codex true})
 
 ;; Provider order per docs/apps/demo.md: Anthropic first because
 ;; api.anthropic.com accepts direct-from-page calls (the fen-web fetch
@@ -76,6 +76,29 @@
     (set spec.name :anthropic)
     (set spec.default-model :claude-haiku-4-5)
     (set spec.api-key-var :ANTHROPIC_API_KEY)
+    spec))
+
+;; ChatGPT/Codex subscription provider (dev-mode only in practice): OAuth
+;; creds come from the kv-seeded auth.json (browserBoot.ts seeds the local
+;; fen CLI's ~/.config/fen/auth.json via the Vite dev bridge), and requests
+;; ride the dev server's /__codex-proxy because chatgpt.com/backend-api has
+;; no CORS headers. Mirrors fen's openai init.fnl auth-provider-spec shape.
+;; Required lazily (not at module top): the openai extension tree is only in
+;; the source map when the bundle includes it (sources.ts); node tests that
+;; hand-build an anthropic-only map must still be able to load this module.
+(fn codex-provider-spec []
+  ;; wasmoon's io.popen exists but throws "'popen' not supported" when
+  ;; called (docs/architecture/seams.md, fen#481), and openai_codex_responses
+  ;; calls it at module load to detect a uname-based user agent. Replace it
+  ;; with a "pipe unavailable" stub (returns nil) so the module's own
+  ;; "pi (lua)" fallback applies instead of the throw aborting the boot.
+  (tset io :popen (fn [_] nil))
+  (let [codex-responses (require :fen.extensions.provider_openai.openai_codex_responses)
+        spec {}]
+    (each [k v (pairs codex-responses)] (tset spec k v))
+    (set spec.name :openai-codex)
+    (set spec.default-model :gpt-5.6-luna)
+    (set spec.auth-backend :openai-codex)
     spec))
 
 ;; @doc fen_web.demo.boot.load-extension!
@@ -211,7 +234,8 @@
         provider (tostring (or opts.provider :anthropic))]
     (when (not (. SUPPORTED-PROVIDERS provider))
       (error (.. "fen_web.demo.boot: unsupported provider '" provider
-                 "'; only 'anthropic' is wired today (see docs/apps/demo.md)")))
+                 "'; only 'anthropic' and 'openai-codex' are wired today "
+                 "(see docs/apps/demo.md)")))
     (let [kv (and _G.__fen_host _G.__fen_host.kv)
           _install (fs-kv.install! kv)
           ;; First-load starter project (fen-web#9) is seeded atomically and
@@ -222,15 +246,29 @@
           ;; makes it race-safe across tabs and all-or-nothing on failure — the
           ;; Lua coroutine cannot await the IndexedDB transaction that gives
           ;; those guarantees.
-          spec (anthropic-provider-spec)
-          api-key (resolve-api-key spec)]
+          codex? (= provider "openai-codex")
+          spec (if codex? (codex-provider-spec) (anthropic-provider-spec))
+          ;; Codex authenticates via the OAuth auth-backend (creds read from
+          ;; the kv-seeded auth.json at request time), not an env-var key.
+          api-key (if codex? nil (resolve-api-key spec))]
       ;; Register the compositional pieces against fen's real api. The tool
       ;; and presenter extensions load through their manifests so their
       ;; reload-modules/reload-exclude and owner cleanup are real; the
       ;; manifest-less provider and session backend register with their own
       ;; owner-scoped privileged api.
-      (register-inline! :fen_web_provider_anthropic
-                        (fn [api] (api.register :provider spec)))
+      (if codex?
+          (register-inline! :fen_web_provider_openai_codex
+                            (fn [api]
+                              (local codex-auth
+                                     (require :fen.extensions.provider_openai.openai_codex_oauth))
+                              (api.register :auth-backend
+                                            {:name :openai-codex
+                                             :description "ChatGPT/Codex OAuth creds from the kv-seeded auth.json."
+                                             :configured? codex-auth.configured?
+                                             :get-fresh-creds! codex-auth.get-fresh-creds!})
+                              (api.register :provider spec)))
+          (register-inline! :fen_web_provider_anthropic
+                            (fn [api] (api.register :provider spec))))
       (M.load-extension! :fen_web.tools.manifest)
       ;; Demo-only preview tools (fen-web#8): the agent drives the app it just
       ;; built in the vfs through the sandboxed iframe over host.preview.
@@ -243,10 +281,14 @@
             _info (session-backend-registry.set-info!
                     (session-lifecycle.backend-info backend session) session)
             agent (agent-mod.make-agent
-                    {:provider-name :anthropic
-                     :model (or opts.model "claude-haiku-4-5")
+                    {:provider-name (if codex? :openai-codex :anthropic)
+                     :model (or opts.model
+                                (if codex? "gpt-5.6-luna" "claude-haiku-4-5"))
                      :system (or opts.system DEFAULT-SYSTEM)
                      :api-key api-key
+                     ;; chatgpt.com/backend-api has no CORS headers; route
+                     ;; Codex through the Vite dev proxy (vite.config.ts).
+                     :provider-options (if codex? {:base-url "/__codex-proxy"} {})
                      :max-tokens (or opts.max-tokens 8192)
                      :tools (tool-registry.merged [])
                      :on-event (fn [ev] (events.emit ev))})

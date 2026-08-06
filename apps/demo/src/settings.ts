@@ -36,6 +36,25 @@ export const PROVIDERS: ProviderChoice[] = [
     browserDirect: true,
     note: "Direct browser access via anthropic-dangerous-direct-browser-access.",
   },
+  // Dev-server only: the auth bridge and /__codex-proxy exist only under
+  // `vite dev`, so don't offer a dead-end provider in production builds.
+  ...(import.meta.env.DEV
+    ? [
+        {
+          id: "openai-codex",
+    label: "OpenAI Codex (ChatGPT OAuth)",
+    // No BYO key: OAuth creds come from the local fen CLI's
+    // ~/.config/fen/auth.json, bridged by the Vite dev server
+    // (/__fen/codex-auth) and seeded into the VM's kv auth path.
+    envVar: "",
+    browserDirect: false,
+          note:
+            "Dev-server only: uses the local fen CLI's Codex OAuth login " +
+            "(run `fen --login openai-codex` first); requests relay through " +
+            "the Vite /__codex-proxy.",
+        },
+      ]
+    : []),
 ];
 
 const DB_NAME = "fen-web-demo";

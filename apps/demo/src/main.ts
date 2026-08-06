@@ -75,7 +75,10 @@ async function main(): Promise<void> {
   const renderSettings = async (): Promise<void> => {
     settingsRoot.replaceChildren();
     const provider = providerById(selectedProvider);
-    const existing = (await store.getApiKey(provider.envVar)) ?? "";
+    // Keyless providers (empty envVar, e.g. openai-codex) authenticate via
+    // dev-server-bridged OAuth creds — no key row, save just (re)starts.
+    const needsKey = provider.envVar !== "";
+    const existing = needsKey ? ((await store.getApiKey(provider.envVar)) ?? "") : "";
     const running = session !== undefined || booting !== undefined;
 
     const form = el("form", { class: "settings-form", id: "settings-form" });
@@ -92,24 +95,28 @@ async function main(): Promise<void> {
     providerRow.append(select);
     form.append(providerRow);
 
-    const keyRow = el("label", { class: "settings-row" }, `${provider.label} API key`);
     const input = el("input", {
       id: "api-key-input",
       type: "password",
       autocomplete: "off",
       placeholder: "sk-ant-…",
     });
-    input.value = existing;
-    keyRow.append(input);
-    form.append(keyRow);
+    if (needsKey) {
+      const keyRow = el("label", { class: "settings-row" }, `${provider.label} API key`);
+      input.value = existing;
+      keyRow.append(input);
+      form.append(keyRow);
+    }
 
     const notice = el(
       "p",
       { class: "settings-notice" },
-      "Your key is stored only in this browser (IndexedDB) and is sent " +
-        "directly to the provider's API — never to any fen-web server. " +
-        "No key proxy exists. " +
-        provider.note,
+      needsKey
+        ? "Your key is stored only in this browser (IndexedDB) and is sent " +
+            "directly to the provider's API — never to any fen-web server. " +
+            "No key proxy exists. " +
+            provider.note
+        : provider.note,
     );
     form.append(notice);
 
@@ -131,7 +138,7 @@ async function main(): Promise<void> {
       running ? "Save & restart" : "Save & start",
     );
     actions.append(save);
-    if (existing) {
+    if (needsKey && existing) {
       const clear = el("button", { type: "button", class: "settings-clear" }, "Forget key");
       clear.addEventListener("click", () => {
         void (async () => {
@@ -162,14 +169,14 @@ async function main(): Promise<void> {
       ev.preventDefault();
       void (async () => {
         const key = input.value.trim();
-        if (!key) {
+        if (needsKey && !key) {
           notice.textContent = "Enter an API key to start.";
           return;
         }
         if (booting) return; // a boot is already in flight; ignore re-submit
         save.setAttribute("disabled", "disabled");
         try {
-          await store.setApiKey(provider.envVar, key);
+          if (needsKey) await store.setApiKey(provider.envVar, key);
           await store.setSelectedProvider(provider.id);
           // Replacing the key must revoke the old VM before a new one boots
           // with the new key snapshot.
@@ -196,9 +203,17 @@ async function main(): Promise<void> {
   // Auto-start when a key is already present so a returning user lands
   // straight in the agent UI; the gate stays reachable via the button.
   const provider = providerById(selectedProvider);
-  const existing = await store.getApiKey(provider.envVar);
-  if (existing) {
-    await startSession(provider.id);
+  if (provider.envVar) {
+    const existing = await store.getApiKey(provider.envVar);
+    if (existing) await startSession(provider.id);
+  } else {
+    // Keyless (openai-codex): only auto-start when the dev-server auth
+    // bridge actually has credentials — otherwise the boot would crash
+    // in-VM instead of landing the user on the settings gate.
+    const bridged = await fetch("/__fen/codex-auth")
+      .then((r) => r.ok)
+      .catch(() => false);
+    if (bridged) await startSession(provider.id);
   }
 
   // Persist session write-backs on unload (best-effort durability).
