@@ -55,16 +55,16 @@ see the top-level [README.md](../../README.md) non-goals.
   only in the provider request's auth header, directly to the provider
   API; no key proxy). Changing or forgetting the key cooperatively stops
   the running VM (`DemoSession.stop`) before erasing/replacing storage, so
-  the old key snapshot is actually revoked. Only `"anthropic"` is accepted
-  today; other providers are rejected up front rather than silently routed. Provider order: Anthropic is wired
+  the old key snapshot is actually revoked. Browser-direct Anthropic and
+  OpenAI BYO-key providers are available; the dev-only `openai-codex` OAuth
+  bridge remains gated to Vite dev mode. Provider order: Anthropic is wired
   first because `api.anthropic.com` accepts direct-from-page calls (the
   fetch backend adds the required `anthropic-dangerous-direct-browser-access`
   header for that host, see [../bindings/fetch.md](../bindings/fetch.md));
-  OpenAI-compatible endpoints (incl. OpenRouter) follow as their provider
-  extensions land in the bundle. fen's kv-backed seams (sessions,
-  `fs_kv`) call kv synchronously, so the shell mirrors IndexedDB into a
-  `SyncKvCache` (`packages/bindings`) at boot — see
-  [../bindings/kv.md](../bindings/kv.md).
+  OpenAI follows with the `openai` provider's default `gpt-5.4-nano` model.
+  fen's kv-backed seams (sessions, `fs_kv`) call kv synchronously, so the
+  shell mirrors IndexedDB into a `SyncKvCache` (`packages/bindings`) at boot
+  — see [../bindings/kv.md](../bindings/kv.md).
 
   **Bundler/dev-server:** Vite (`apps/web/vite.config.ts`). `npm run dev
   -w @fen-web/web` serves the page; `npm run build` produces the static

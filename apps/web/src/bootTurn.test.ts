@@ -39,6 +39,7 @@ const platformFnl = path.resolve(repoRoot, "packages", "platform", "fnl");
 const demoFnl = path.resolve(here, "..", "fnl");
 
 const KEY = "test-key";
+const OPENAI_KEY = "openai-test-key";
 const REPLY = "Hello from Claude";
 
 function buildSources(): Map<string, FenSource> {
@@ -54,6 +55,7 @@ function buildSources(): Map<string, FenSource> {
   // Flat provider dirs (real dotted names come from a rockspec, not the
   // directory layout) — same treatment as turn.test.ts and sources.ts.
   const anthropicDir = path.join(fenExtensions, "adapters", "providers", "anthropic");
+  const openaiDir = path.join(fenExtensions, "adapters", "providers", "openai");
   const sharedDir = path.join(fenExtensions, "adapters", "providers", "shared");
   const manual: Record<string, string> = {
     "fen.extensions.provider_anthropic.anthropic_messages": path.join(
@@ -62,6 +64,15 @@ function buildSources(): Map<string, FenSource> {
     ),
     "fen.extensions.provider_anthropic": path.join(anthropicDir, "init.fnl"),
     "fen.extensions.provider_anthropic.manifest": path.join(anthropicDir, "manifest.fnl"),
+    "fen.extensions.provider_openai.openai_completions": path.join(
+      openaiDir,
+      "openai_completions.fnl",
+    ),
+    "fen.extensions.provider_openai.openai_model_catalog": path.join(
+      openaiDir,
+      "openai_model_catalog.fnl",
+    ),
+    "fen.extensions.provider_shared": path.join(sharedDir, "init.fnl"),
     "fen.extensions.provider_shared.streaming": path.join(sharedDir, "streaming.fnl"),
     "fen.extensions.provider_shared.retry": path.join(sharedDir, "retry.fnl"),
   };
@@ -95,6 +106,7 @@ function starterFilesFromDisk(): Record<string, string> {
 function makeSyncKv() {
   const store = new Map<string, string>();
   store.set("env/apikey/ANTHROPIC_API_KEY", KEY);
+  store.set("env/apikey/OPENAI_API_KEY", OPENAI_KEY);
   return {
     sync: true as const,
     get: (k: string) => store.get(k),
@@ -103,6 +115,18 @@ function makeSyncKv() {
     list: (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix ?? "")).sort(),
     store,
   };
+}
+
+async function seedStarter(kv: ReturnType<typeof makeSyncKv>): Promise<void> {
+  const asyncKv: HostKv = {
+    get: async (k) => kv.store.get(k),
+    put: async (k, v) => void kv.store.set(k, v),
+    delete: async (k) => void kv.store.delete(k),
+    list: async (p) =>
+      [...kv.store.keys()].filter((key) => key.startsWith(p ?? "")).sort(),
+  };
+  const seeded = await seedIfEmptyKv(asyncKv, validateStarterFiles(starterFilesFromDisk()));
+  assert.ok(seeded, "a fresh store should seed the starter project");
 }
 
 /** Wrap a HostFetch to record the request options each call receives, so the
@@ -141,6 +165,29 @@ function anthropicSse(text: string): string[] {
   ];
 }
 
+function openaiSse(text: string): string[] {
+  const frame = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
+  const words = text.split(" ");
+  return [
+    ...words.map((word, index) =>
+      frame({
+        choices: [
+          {
+            index: 0,
+            delta: { content: index === 0 ? word : " " + word },
+            finish_reason: null,
+          },
+        ],
+      }),
+    ),
+    frame({
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 8, completion_tokens: words.length, total_tokens: 8 + words.length },
+    }),
+    "data: [DONE]\n\n",
+  ];
+}
+
 function transcriptText(dom: FakeDom): string {
   return dom
     .childIds("fen-transcript")
@@ -164,15 +211,7 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
   // IndexedDbKv.seedIfEmpty; browsers get transactional atomicity). Node has
   // no IndexedDB, so mirror the same shared seed helper over the table store
   // the sync kv reads, exactly as the browser does before snapshotting.
-  const asyncKv: HostKv = {
-    get: async (k) => kv.store.get(k),
-    put: async (k, v) => void kv.store.set(k, v),
-    delete: async (k) => void kv.store.delete(k),
-    list: async (p) =>
-      [...kv.store.keys()].filter((k) => k.startsWith(p ?? "")).sort(),
-  };
-  const seeded = await seedIfEmptyKv(asyncKv, validateStarterFiles(starterFilesFromDisk()));
-  assert.ok(seeded, "a fresh store should seed the starter project");
+  await seedStarter(kv);
 
   // Deterministic, bounded scheduler: bootDemo pushes each next frame here
   // and the test drains it, so no wall-clock rAF/timeout timing is involved.
@@ -247,6 +286,76 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
 
   // Cooperative shutdown: stop() asks the run loop to quit and resolves once
   // the VM is torn down; drive frames until it settles.
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await runUntil(() => stopped, 3000);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
+});
+
+test("bootDemo drives the demo presenter through one OpenAI Chat Completions turn end to end", async () => {
+  const reply = "Hello from OpenAI";
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: openaiSse(reply),
+  });
+  const recorder = recordingFetch(scripted);
+  const dom = new FakeDom("fen-app");
+  const kv = makeSyncKv();
+  await seedStarter(kv);
+
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  const runUntil = async (cond: () => boolean, maxMs = 8000): Promise<void> => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < maxMs) {
+      const task = tasks.shift();
+      if (task) task();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
+  const deps: DemoRuntimeDeps = {
+    sources: buildSources(),
+    fetchBackendSource: fetchBackendSource(),
+    kv,
+    dom,
+    preview: new FakePreview(),
+    fetch: recorder.fetch,
+    schedule,
+  };
+
+  const session = await bootDemo({ provider: "openai" }, deps);
+  await runUntil(() => dom.exists("fen-inputbar") && dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-inputbar"), "presenter skeleton should be built");
+
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "hi" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  const entryCount = () => [...kv.store.keys()].filter((key) => key.includes(":entry:")).length;
+  await runUntil(() => entryCount() >= 2);
+
+  const transcript = transcriptText(dom);
+  assert.ok(transcript.includes("> hi"), `expected the user row, got:\n${transcript}`);
+  assert.ok(transcript.includes(reply), `expected the streamed assistant reply, got:\n${transcript}`);
+  assert.equal(entryCount(), 2, `expected 2 persisted entries, got ${entryCount()}`);
+
+  assert.equal(recorder.requests.length, 1, "expected exactly one provider request");
+  const req = recorder.requests[0];
+  assert.equal(req.url, "https://api.openai.com/v1/chat/completions");
+  assert.equal(JSON.parse(req.body ?? "{}").model, "gpt-5.4-nano");
+  const headers = (req.headers ?? {}) as Record<string, string>;
+  assert.equal(headers.authorization, `Bearer ${OPENAI_KEY}`);
+  assert.equal(headers["x-api-key"], undefined, "OpenAI should use Bearer auth");
+  assert.equal(
+    headers["anthropic-dangerous-direct-browser-access"],
+    undefined,
+    "OpenAI should not receive Anthropic's browser header",
+  );
+
   let stopped = false;
   const stopPromise = session.stop().then(() => {
     stopped = true;

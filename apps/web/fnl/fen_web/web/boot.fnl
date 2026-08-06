@@ -61,21 +61,34 @@
       "app, render it with preview_refresh and drive it with preview_query/"
       "click/fill/eval/screenshot to verify it works. Be concise."))
 
-(local SUPPORTED-PROVIDERS {:anthropic true :openai-codex true})
+(local SUPPORTED-PROVIDERS {:anthropic true :openai true :openai-codex true})
 
 ;; Provider order per docs/apps/web.md: Anthropic first because
 ;; api.anthropic.com accepts direct-from-page calls (the fen-web fetch
 ;; backend adds the required anthropic-dangerous-direct-browser-access
-;; header for that host; see packages/bindings/fnl/.../fetch.fnl). Mirrors
-;; fen's anthropic init.fnl provider-spec shape (:name/:default-model/
-;; :api-key-var merged over the provider record) so registration is
-;; identical to the desktop provider.
+;; header for that host; see packages/bindings/fnl/.../fetch.fnl). OpenAI's
+;; public API is also browser-direct and uses its standard Bearer header.
+;; Mirrors fen's provider init.fnl specs (:name/:default-model/:api-key-var
+;; merged over the provider record) so registration is identical to desktop.
 (fn anthropic-provider-spec []
   (let [spec {}]
     (each [k v (pairs anthropic)] (tset spec k v))
     (set spec.name :anthropic)
     (set spec.default-model :claude-haiku-4-5)
     (set spec.api-key-var :ANTHROPIC_API_KEY)
+    spec))
+
+;; Public OpenAI Chat Completions provider. Required lazily so boot's module
+;; remains loadable for focused tests that assemble an Anthropic-only source
+;; map; the browser bundle includes the full provider tree in sources.ts.
+(fn openai-provider-spec []
+  (let [openai-completions
+         (require :fen.extensions.provider_openai.openai_completions)
+        spec {}]
+    (each [k v (pairs openai-completions)] (tset spec k v))
+    (set spec.name :openai)
+    (set spec.default-model :gpt-5.4-nano)
+    (set spec.api-key-var :OPENAI_API_KEY)
     spec))
 
 ;; ChatGPT/Codex subscription provider (dev-mode only in practice): OAuth
@@ -234,7 +247,7 @@
         provider (tostring (or opts.provider :anthropic))]
     (when (not (. SUPPORTED-PROVIDERS provider))
       (error (.. "fen_web.web.boot: unsupported provider '" provider
-                 "'; only 'anthropic' and 'openai-codex' are wired today "
+                 "'; only 'anthropic', 'openai', and 'openai-codex' are wired "
                  "(see docs/apps/web.md)")))
     (let [kv (and _G.__fen_host _G.__fen_host.kv)
           _install (fs-kv.install! kv)
@@ -247,7 +260,12 @@
           ;; Lua coroutine cannot await the IndexedDB transaction that gives
           ;; those guarantees.
           codex? (= provider "openai-codex")
-          spec (if codex? (codex-provider-spec) (anthropic-provider-spec))
+          openai? (= provider "openai")
+          spec (if codex?
+                   (codex-provider-spec)
+                   (if openai?
+                       (openai-provider-spec)
+                       (anthropic-provider-spec)))
           ;; Codex authenticates via the OAuth auth-backend (creds read from
           ;; the kv-seeded auth.json at request time), not an env-var key.
           api-key (if codex? nil (resolve-api-key spec))]
@@ -267,7 +285,9 @@
                                              :configured? codex-auth.configured?
                                              :get-fresh-creds! codex-auth.get-fresh-creds!})
                               (api.register :provider spec)))
-          (register-inline! :fen_web_provider_anthropic
+          (register-inline! (if openai?
+                                :fen_web_provider_openai
+                                :fen_web_provider_anthropic)
                             (fn [api] (api.register :provider spec))))
       (M.load-extension! :fen_web.tools.manifest)
       ;; Demo-only preview tools (fen-web#8): the agent drives the app it just
@@ -281,9 +301,15 @@
             _info (session-backend-registry.set-info!
                     (session-lifecycle.backend-info backend session) session)
             agent (agent-mod.make-agent
-                    {:provider-name (if codex? :openai-codex :anthropic)
+                    {:provider-name (if codex?
+                                       :openai-codex
+                                       (if openai? :openai :anthropic))
                      :model (or opts.model
-                                (if codex? "gpt-5.6-luna" "claude-haiku-4-5"))
+                                (if codex?
+                                    "gpt-5.6-luna"
+                                    (if openai?
+                                        "gpt-5.4-nano"
+                                        "claude-haiku-4-5")))
                      :system (or opts.system DEFAULT-SYSTEM)
                      :api-key api-key
                      ;; chatgpt.com/backend-api has no CORS headers; route

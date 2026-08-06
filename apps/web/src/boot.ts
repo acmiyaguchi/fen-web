@@ -18,9 +18,10 @@ import {
 // DOM/fetch) lives in browserBoot.ts, which supplies the deps below.
 
 export interface DemoBootOptions {
-  /** Provider id — only "anthropic" is wired today (see docs/apps/web.md).
-   * Anything else is rejected up front rather than silently routed to
-   * Anthropic. The API key is NOT passed here: it is resolved in-VM via
+  /** Provider id — "anthropic" and "openai" use browser-direct BYO keys;
+   * "openai-codex" is available only through the dev-server OAuth bridge (see
+   * docs/apps/web.md). Anything else is rejected up front rather than silently
+   * routed to Anthropic. The API key is NOT passed here: it is resolved in-VM via
    * `os.getenv("<VAR>")` → kv path `env/apikey/<VAR>` (docs/platform/shims.md),
    * the same credential seam the desktop provider uses. */
   provider?: string;
@@ -97,9 +98,9 @@ export async function bootDemo(
   deps: DemoRuntimeDeps,
 ): Promise<DemoSession> {
   const provider = opts.provider ?? "anthropic";
-  if (provider !== "anthropic" && provider !== "openai-codex") {
+  if (provider !== "anthropic" && provider !== "openai" && provider !== "openai-codex") {
     throw new Error(
-      `fen-web demo: unsupported provider "${provider}"; only "anthropic" and "openai-codex" are wired today`,
+      `fen-web demo: unsupported provider "${provider}"; only "anthropic", "openai", and "openai-codex" are wired`,
     );
   }
 

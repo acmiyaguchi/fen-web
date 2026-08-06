@@ -25,8 +25,8 @@ export interface ProviderChoice {
 /**
  * Provider order per docs/apps/web.md: Anthropic is wired first because
  * api.anthropic.com accepts direct-from-page calls (the fetch backend adds
- * `anthropic-dangerous-direct-browser-access`). OpenAI-compatible endpoints
- * (incl. OpenRouter) come as their provider extensions land here.
+ * `anthropic-dangerous-direct-browser-access`), followed by OpenAI's public
+ * API, which also serves browser CORS requests.
  */
 export const PROVIDERS: ProviderChoice[] = [
   {
@@ -36,9 +36,16 @@ export const PROVIDERS: ProviderChoice[] = [
     browserDirect: true,
     note: "Direct browser access via anthropic-dangerous-direct-browser-access.",
   },
+  {
+    id: "openai",
+    label: "OpenAI",
+    envVar: "OPENAI_API_KEY",
+    browserDirect: true,
+    note: "Direct browser access to api.openai.com; no fen-web key proxy is used.",
+  },
   // Dev-server only: the auth bridge and /__codex-proxy exist only under
   // `vite dev`, so don't offer a dead-end provider in production builds.
-  ...(import.meta.env.DEV
+  ...(import.meta.env?.DEV
     ? [
         {
           id: "openai-codex",
