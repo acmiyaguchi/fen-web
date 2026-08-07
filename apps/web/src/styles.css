@@ -605,4 +605,13 @@ body {
   .fen-stop {
     padding: 0 0.75rem;
   }
+
+  /* iOS Safari auto-zooms focused fields whose font-size is below 16px;
+     keep every text control at 16px on small screens to suppress it. */
+  .fen-input,
+  .overlay-input,
+  .settings-row input,
+  .settings-row select {
+    font-size: 16px;
+  }
 }
