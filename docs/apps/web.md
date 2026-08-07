@@ -102,11 +102,11 @@ see the top-level [README.md](../../README.md) non-goals.
   fatal panels, non-destructive page-error notices, and transcript error rows
   have the same one-tap action. Reports are plain Markdown/text and include the
   error and stack when applicable, provider/model, fen and fen-web versions,
-  browser UA, and the last 50 terse turn/bus events. A later preview-console
-  capture (#34) can fill the optional `Preview console (tail)` section; it is
-  intentionally not captured here. The shell does retain a small recent host
-  console tail for on-demand reports. Diagnostics are collected in JS at the
-  presenter `api.on :*` → `__fen_host.diagnostics_event` seam, never by
+  browser UA, the last 50 terse turn/bus events, and the bounded recent
+  `Preview console (tail)` retained by the preview host. The shell also retains
+  a small recent host console tail for on-demand reports. Diagnostics are
+  collected in JS at the presenter `api.on :*` → `__fen_host.diagnostics_event`
+  seam, never by
   querying the VM during a coroutine. Request bodies are not recorded, and
   high-frequency streaming deltas are excluded so a long answer cannot evict
   the events that explain a failure. Bus-event summaries can, however,
@@ -131,10 +131,12 @@ see the top-level [README.md](../../README.md) non-goals.
   `preview_query(selector)`, `preview_click(selector)`,
   `preview_fill(selector, value)`, `preview_eval(expr)` drive the running
   app via a `postMessage` RPC channel; `preview_screenshot` renders a
-  canvas → dataURL. The RPC is the new `host.preview` primitive
+  canvas → dataURL, and `preview_console` drains bounded console output and
+  uncaught errors. Click/fill/eval also append a terse marker when an uncaught
+  error is waiting. The RPC is the new `host.preview` primitive
   (`packages/bindings/src/preview`, [../bindings/preview.md](../bindings/preview.md));
   the page assembly (rendering the vfs tree, inlining same-tree
-  stylesheet/script refs) and the six tools live in Fennel
+  stylesheet/script refs) and the seven tools live in Fennel
   (`apps/web/fnl/fen_web/web/preview`), registered demo-only through the
   per-owner manifest loader (`fen_web.web.boot.load-extension!` on
   `fen_web.web.preview.manifest`) — the same path the file tools use, not

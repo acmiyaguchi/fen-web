@@ -6,6 +6,7 @@ import {
 import {
   FetchPoller,
   normalizeOps,
+  serializePreviewConsoleEntries,
   type DomOp,
   type FetchPollResult,
   type FetchRequestOptions,
@@ -72,6 +73,8 @@ export interface DemoRuntimeDeps {
   dispose?: () => void | Promise<void>;
   /** Frame scheduler; defaults to rAF (browser) / setTimeout (off-DOM). */
   schedule?: (fn: () => void) => void;
+  /** Narrow host override seam used by boundary tests; browser boot leaves it unset. */
+  hostOverrides?: Record<string, unknown>;
 }
 
 export interface DemoSession {
@@ -98,6 +101,78 @@ async function installFetchBackend(rt: FenRuntime, src: string): Promise<void> {
   `);
 }
 
+/** Build the exact JS host table passed to wasmoon. Keeping this separately
+ * callable lets the tests assert the JSON-text contract before Lua marshaling,
+ * while bootDemo still uses the same object in production. */
+export function buildDemoHostTable(
+  deps: DemoRuntimeDeps,
+  poller: FetchPoller,
+): Record<string, unknown> {
+  return {
+    kv: deps.kv,
+    dom_apply: (ops: unknown) => deps.dom.apply(normalizeOps(ops as DomOp[])),
+    // One-way Lua -> JS seam. DiagnosticsBuffer immediately retains only a
+    // bounded scrubbed summary; JS never queries the VM mid-coroutine.
+    // The Fennel side filters control events before this callback is called;
+    // this catch is the second guard against a diagnostics bug poisoning a
+    // live turn coroutine.
+    diagnostics_event: (event: unknown) => {
+      try {
+        deps.diagnostics?.recordBusEvent(event);
+      } catch {
+        // Diagnostics are observational and must never affect the VM.
+      }
+    },
+    // Never retain request bodies or header values: only URL/method and
+    // header names enter the diagnostics ring. Record failures are isolated
+    // from the request transport in both directions of the poll protocol.
+    fetch_start: (fetchOpts: unknown) => {
+      const options = fetchOpts as FetchRequestOptions;
+      try {
+        deps.diagnostics?.record("fetch:start", {
+          url: options.url,
+          method: options.method,
+          headerNames: Object.keys(options.headers ?? {}).sort(),
+        });
+      } catch {
+        // A diagnostics failure must not poison an in-flight request.
+      }
+      return poller.start(options);
+    },
+    fetch_poll: (id: number) => {
+      const result: FetchPollResult = poller.poll(id);
+      if (result.done) {
+        try {
+          deps.diagnostics?.record("fetch:done", {
+            status: result.status,
+            error: result.error,
+            chunksThisPoll: result.chunks.length,
+          });
+        } catch {
+          // A diagnostics failure must not poison an in-flight request.
+        }
+      }
+      return result;
+    },
+    fetch_dispose: (id: number) => poller.dispose(id),
+    // host.preview: setHtml (preview_refresh) + the async postMessage RPC
+    // bridge (preview_query/click/fill/eval/screenshot). Mirrors the
+    // fetch start/poll/dispose shape so the Fennel tools yield between
+    // polls (docs/bindings/preview.md).
+    preview_set_html: (html: unknown) => deps.preview.setHtml(String(html)),
+    preview_rpc_start: (req: unknown) => deps.preview.rpcStart(req as never),
+    preview_rpc_poll: (id: number) => deps.preview.rpcPoll(id),
+    preview_rpc_dispose: (id: number) => deps.preview.rpcDispose(id),
+    // preview_console is synchronous by design: Lua drains whatever the
+    // host has already received; JS never calls back into the VM. Return
+    // bounded JSON text rather than the JS array: wasmoon marshals arrays as
+    // proxy userdata, which cjson cannot encode in the Fennel tool.
+    preview_console_drain: () => serializePreviewConsoleEntries(deps.preview.drainConsole()),
+    preview_console_uncaught_count: () => deps.preview.uncaughtConsoleErrors(),
+    ...(deps.hostOverrides ?? {}),
+  };
+}
+
 /**
  * Boot the VM, wire the host primitives (kv/dom/fetch), and drive the demo
  * presenter's turn loop (fen_web.web.boot/run) inside the runtime coroutine
@@ -120,68 +195,15 @@ export async function bootDemo(
     provider,
     ...(opts.model ? { model: opts.model } : {}),
   });
+  // Keep the host-side preview tail live for diagnostics snapshots. This is a
+  // non-draining read; preview_console owns the unread cursor.
+  deps.diagnostics?.setPreviewConsoleTailProvider(() => deps.preview.previewConsoleTail());
 
   const rt = await createFenRuntime({
     sources: deps.sources,
     ...(deps.fennelSource ? { fennelSource: deps.fennelSource } : {}),
     ...(deps.cjsonSource ? { preload: { cjson: deps.cjsonSource } } : {}),
-    host: {
-      kv: deps.kv,
-      dom_apply: (ops: unknown) => deps.dom.apply(normalizeOps(ops as DomOp[])),
-      // One-way Lua -> JS seam. DiagnosticsBuffer immediately retains only a
-      // bounded scrubbed summary; JS never queries the VM mid-coroutine.
-      // The Fennel side filters control events before this callback is called;
-      // this catch is the second guard against a diagnostics bug poisoning a
-      // live turn coroutine.
-      diagnostics_event: (event: unknown) => {
-        try {
-          deps.diagnostics?.recordBusEvent(event);
-        } catch {
-          // Diagnostics are observational and must never affect the VM.
-        }
-      },
-      // Never retain request bodies or header values: only URL/method and
-      // header names enter the diagnostics ring. Record failures are isolated
-      // from the request transport in both directions of the poll protocol.
-      fetch_start: (fetchOpts: unknown) => {
-        const options = fetchOpts as FetchRequestOptions;
-        try {
-          deps.diagnostics?.record("fetch:start", {
-            url: options.url,
-            method: options.method,
-            headerNames: Object.keys(options.headers ?? {}).sort(),
-          });
-        } catch {
-          // A diagnostics failure must not poison an in-flight request.
-        }
-        return poller.start(options);
-      },
-      fetch_poll: (id: number) => {
-        const result: FetchPollResult = poller.poll(id);
-        if (result.done) {
-          try {
-            deps.diagnostics?.record("fetch:done", {
-              status: result.status,
-              error: result.error,
-              chunksThisPoll: result.chunks.length,
-            });
-          } catch {
-            // A diagnostics failure must not poison an in-flight request.
-          }
-        }
-        return result;
-      },
-      fetch_dispose: (id: number) => poller.dispose(id),
-      // host.preview: setHtml (preview_refresh) + the async postMessage RPC
-      // bridge (preview_query/click/fill/eval/screenshot). Mirrors the
-      // fetch start/poll/dispose shape so the Fennel tools yield between
-      // polls (docs/bindings/preview.md).
-      preview_set_html: (html: unknown) => deps.preview.setHtml(String(html)),
-      preview_rpc_start: (req: unknown) =>
-        deps.preview.rpcStart(req as never),
-      preview_rpc_poll: (id: number) => deps.preview.rpcPoll(id),
-      preview_rpc_dispose: (id: number) => deps.preview.rpcDispose(id),
-    },
+    host: buildDemoHostTable(deps, poller),
   });
 
   let pump: Awaited<ReturnType<FenRuntime["createCoroutinePump"]>>;

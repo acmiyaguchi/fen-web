@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   DiagnosticsBuffer,
   FEN_VERSION,
+  PREVIEW_DIAGNOSTICS_TAIL_LIMIT,
   formatDiagnostics,
   scrubSecrets,
   summarizePayload,
@@ -162,6 +163,27 @@ test("bus events can supply provider/model metadata without retaining raw payloa
   assert.match(report, /Provider: anthropic/);
   assert.match(report, /Model: claude/);
   assert.equal(report.includes(key), false);
+});
+
+test("diagnostics read the live preview tail without draining it", () => {
+  const diagnostics = new DiagnosticsBuffer();
+  let tail: readonly unknown[] = [{ level: "error", args: ["boom"], stack: "Error: boom" }];
+  diagnostics.setPreviewConsoleTailProvider(() => tail);
+  const report = diagnostics.snapshot();
+  assert.match(report, /Preview console \(tail\)/);
+  assert.match(report, /Error: boom/);
+  assert.deepEqual(tail, [{ level: "error", args: ["boom"], stack: "Error: boom" }]);
+});
+
+test("diagnostics cap the preview tail at the last 25 entries", () => {
+  const diagnostics = new DiagnosticsBuffer();
+  const tail = Array.from({ length: PREVIEW_DIAGNOSTICS_TAIL_LIMIT + 5 }, (_, i) => `entry-${i}`);
+  diagnostics.setPreviewConsoleTailProvider(() => tail);
+  const report = diagnostics.snapshot();
+  assert.equal(report.includes("entry-0"), false);
+  assert.equal(report.includes("entry-4"), false);
+  assert.equal(report.includes("entry-5"), true);
+  assert.equal(report.includes("entry-29"), true);
 });
 
 test("a report without an error is still useful on demand", () => {

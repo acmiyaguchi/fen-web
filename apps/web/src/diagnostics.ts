@@ -39,7 +39,7 @@ export interface DiagnosticsContext {
   storageUsage?: number;
   storageQuota?: number;
   events?: readonly DiagnosticEvent[];
-  /** Reserved for preview-console capture (#34); omitted when not supplied. */
+  /** Preview-console tail (#34); omitted when the preview host is absent. */
   previewConsoleTail?: readonly unknown[];
   /** Host console entries captured by the shell, when available. */
   hostConsole?: readonly unknown[];
@@ -51,6 +51,7 @@ const CIRCULAR = "[Circular]";
 const MAX_SUMMARY_LENGTH = 320;
 const MAX_DEPTH = 3;
 const MAX_ITEMS = 20;
+export const PREVIEW_DIAGNOSTICS_TAIL_LIMIT = 25;
 
 /** String conversion must not be allowed to turn a hostile throwable into a
  * second exception while diagnostics are trying to describe it. */
@@ -351,8 +352,9 @@ export function formatDiagnostics(context: DiagnosticsContext, secrets: readonly
   }
   lines.push("```", "");
 
-  if (context.previewConsoleTail && context.previewConsoleTail.length > 0) {
-    lines.push(...sectionLines("Preview console (tail)", context.previewConsoleTail, secrets));
+  const previewTail = context.previewConsoleTail?.slice(-PREVIEW_DIAGNOSTICS_TAIL_LIMIT);
+  if (previewTail && previewTail.length > 0) {
+    lines.push(...sectionLines("Preview console (tail)", previewTail, secrets));
   }
   if (context.hostConsole && context.hostConsole.length > 0) {
     lines.push(...sectionLines("Host console (recent)", context.hostConsole, secrets));
@@ -369,6 +371,8 @@ export interface DiagnosticsStorageApi {
   estimate?: () => Promise<{ usage?: number; quota?: number }>;
 }
 
+export type PreviewConsoleTailProvider = () => readonly unknown[];
+
 /** Bounded state holder used by the browser shell and by boot.ts. */
 export class DiagnosticsBuffer {
   private readonly limit: number;
@@ -380,6 +384,7 @@ export class DiagnosticsBuffer {
     { summary: string; event: DiagnosticEvent; count: number }
   >();
   private storageApi: DiagnosticsStorageApi | undefined;
+  private previewConsoleTailProvider?: PreviewConsoleTailProvider;
   private context: Omit<DiagnosticsContext, "events" | "hostConsole"> = {};
 
   constructor(options: DiagnosticsOptions = {}) {
@@ -393,6 +398,11 @@ export class DiagnosticsBuffer {
 
   setContext(context: Omit<DiagnosticsContext, "events" | "hostConsole">): void {
     this.context = { ...this.context, ...context };
+  }
+
+  /** Attach the host-side preview ring without draining it for a report. */
+  setPreviewConsoleTailProvider(provider: PreviewConsoleTailProvider | undefined): void {
+    this.previewConsoleTailProvider = provider;
   }
 
   record(kind: unknown, payload?: unknown, timestamp = Date.now()): void {
@@ -491,6 +501,7 @@ export class DiagnosticsBuffer {
         ...this.context,
         ...(error === undefined ? {} : { error: normalizeError(error, [...this.secrets]) }),
         events: this.events,
+        previewConsoleTail: this.previewConsoleTailProvider?.(),
         hostConsole: this.hostConsole,
       },
       [...this.secrets],

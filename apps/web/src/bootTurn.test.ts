@@ -7,6 +7,7 @@ import { loadFenTree, type FenSource } from "@fen-web/runtime";
 import {
   FakeDom,
   FakePreview,
+  FetchPoller,
   type DomOp,
   type FetchRequestOptions,
   type FetchResult,
@@ -18,7 +19,7 @@ import {
   validateStarterFiles,
 } from "@fen-web/bindings";
 import { DiagnosticsBuffer } from "./diagnostics.js";
-import { bootDemo, type DemoRuntimeDeps } from "./boot.js";
+import { bootDemo, buildDemoHostTable, type DemoRuntimeDeps } from "./boot.js";
 
 // End-to-end proof that the #7 wiring boots the runtime + bindings + DOM
 // presenter and runs one real agent turn: it invokes the *actual* exported
@@ -169,12 +170,54 @@ function anthropicSse(text: string): string[] {
   ];
 }
 
+function anthropicToolUseSse(name: string, id = "call-1"): string[] {
+  const frame = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
+  return [
+    frame({ type: "message_start", message: { usage: { input_tokens: 8 } } }),
+    frame({
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id, name, input: {} },
+    }),
+    frame({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: "{}" },
+    }),
+    frame({ type: "content_block_stop", index: 0 }),
+    frame({ type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 1 } }),
+    frame({ type: "message_stop" }),
+  ];
+}
+
 function transcriptText(dom: FakeDom): string {
   return dom
     .childIds("fen-transcript")
     .map((id) => dom.get(id).text)
     .join("\n");
 }
+
+test("boot host exposes preview_console_drain as bounded JSON text", () => {
+  const preview = new FakePreview();
+  preview.recordConsole({ level: "error", args: ["buffered"], stack: "Error: buffered" });
+  const hostTable = buildDemoHostTable(
+    {
+      sources: new Map(),
+      fetchBackendSource: "",
+      kv: {},
+      dom: { apply: () => undefined },
+      preview,
+      fetch: new ScriptedFetch(),
+    },
+    new FetchPoller(new ScriptedFetch()),
+  );
+
+  const drain = hostTable.preview_console_drain as () => unknown;
+  const text = drain();
+  assert.equal(typeof text, "string");
+  if (typeof text !== "string") throw new Error("preview_console_drain violated its JSON-text contract");
+  assert.match(text, /buffered/);
+});
 
 test("bootDemo drives the demo presenter through one Anthropic turn end to end", async () => {
   const scripted = new ScriptedFetch();
@@ -311,6 +354,138 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
     stopped = true;
   });
   await runUntil(() => stopped, 3000);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
+});
+
+test("bootDemo preview_console crosses the real wasmoon boundary as JSON text", async () => {
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicToolUseSse("preview_console"),
+  });
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicSse("done"),
+  });
+  const recorder = recordingFetch(scripted);
+  const preview = new FakePreview();
+  preview.recordConsole({ level: "error", args: ["buffered"], stack: "Error: buffered" });
+  const dom = new FakeDom("fen-app");
+  const kv = makeSyncKv();
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  const runUntil = async (cond: () => boolean, maxMs = 8000): Promise<void> => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < maxMs) {
+      const task = tasks.shift();
+      if (task) task();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+  let fatal: unknown;
+  const session = await bootDemo(
+    { provider: "anthropic", model: "claude-haiku-4-5" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv,
+      dom,
+      preview,
+      fetch: recorder.fetch,
+      schedule,
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await runUntil(() => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "presenter should boot before the tool call");
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "inspect" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await runUntil(() => recorder.requests.length >= 2 || fatal !== undefined);
+
+  assert.equal(fatal, undefined, "preview_console should not crash at the JS/Lua boundary");
+  assert.equal(recorder.requests.length, 2, "the tool turn should make a follow-up provider request");
+  assert.match(
+    recorder.requests[1].body ?? "",
+    /buffered/,
+    "the tool result must contain the entry that crossed the JS/Lua boundary",
+  );
+  assert.deepEqual(preview.drainConsole(), [], "preview_console should consume the buffered entry");
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await runUntil(() => stopped);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
+});
+
+test("bootDemo turns a raw JS preview-console array into a clean tool error", async () => {
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicToolUseSse("preview_console"),
+  });
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicSse("recovered"),
+  });
+  const recorder = recordingFetch(scripted);
+  const dom = new FakeDom("fen-app");
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  const runUntil = async (cond: () => boolean, maxMs = 8000): Promise<void> => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < maxMs) {
+      const task = tasks.shift();
+      if (task) task();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+  let fatal: unknown;
+  const session = await bootDemo(
+    { provider: "anthropic", model: "claude-haiku-4-5" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(),
+      dom,
+      preview: new FakePreview(),
+      fetch: recorder.fetch,
+      schedule,
+      // Deliberately violate the JS host contract with a raw array. The
+      // wasmoon boundary must turn it into userdata, and the Fennel guard must
+      // return a tool error instead of handing it to cjson or crashing.
+      hostOverrides: {
+        preview_console_drain: () => [{ level: "error", args: ["raw-array"] }],
+      },
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await runUntil(() => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "presenter should boot before the tool call");
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "inspect" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await runUntil(() => recorder.requests.length >= 2 || fatal !== undefined);
+
+  assert.equal(fatal, undefined, "a raw JS array should not crash the run loop");
+  assert.equal(recorder.requests.length, 2, "the tool error should still complete the turn");
+  assert.match(recorder.requests[1].body ?? "", /non-JSON data/);
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await runUntil(() => stopped);
   await stopPromise;
   assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
 });

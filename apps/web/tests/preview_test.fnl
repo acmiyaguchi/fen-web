@@ -10,6 +10,7 @@
 (local support (require :support))
 (local html (require :fen_web.web.preview.html))
 (local preview (require :fen_web.web.preview))
+(local json (require :fen.util.json))
 
 ;; A table-backed host.kv (same shape as packages/platform/tests/support.fnl's
 ;; make-kv), installed at _G.__fen_host.kv for the vfs the tools/builder read.
@@ -44,6 +45,20 @@
     (set h.preview_rpc_poll
          (fn [id] {:done true :result (. h.results id)}))
     (set h.preview_rpc_dispose (fn [id] (tset h.results id nil)))
+    (set h.console [])
+    (set h.preview_console_drain
+         (fn []
+           (let [entries h.console]
+             (set h.console [])
+             (json.encode (if (> (length entries) 0)
+                              entries
+                              json.empty-array)))))
+    (set h.preview_console_uncaught_count
+         (fn []
+           (var count 0)
+           (each [_ entry (ipairs h.console)]
+             (when entry.uncaught (set count (+ count 1))))
+           count))
     h))
 
 (fn install-host! [kv prev]
@@ -53,7 +68,9 @@
       (set host.preview_set_html prev.preview_set_html)
       (set host.preview_rpc_start prev.preview_rpc_start)
       (set host.preview_rpc_poll prev.preview_rpc_poll)
-      (set host.preview_rpc_dispose prev.preview_rpc_dispose))
+      (set host.preview_rpc_dispose prev.preview_rpc_dispose)
+      (set host.preview_console_drain prev.preview_console_drain)
+      (set host.preview_console_uncaught_count prev.preview_console_uncaught_count))
     (set _G.__fen_host host)
     host))
 
@@ -92,7 +109,7 @@
           (fn []
             (let [kv (make-kv)]
               (put-file kv "/index.html"
-                        (.. "<html><head>"
+                        (.. "<!doctype html><html><head><meta charset=\"utf-8\">"
                             "<link rel=\"stylesheet\" href=\"style.css\">"
                             "</head><body><script src=\"app.js\"></script>"
                             "</body></html>"))
@@ -103,9 +120,73 @@
                 (assert.is_truthy (string.find page "<style>" 1 true))
                 (assert.is_truthy (string.find page "body{color:red}" 1 true))
                 (assert.is_truthy (string.find page "console.log('hi')" 1 true))
+                ;; Keep standards mode and put the harness before app code,
+                ;; after the document metadata, exactly once.
+                (assert.are.equal "<!doctype html>" (string.sub page 1 15))
+                (let [harness-at (pick-values 1
+                                               (string.find page
+                                                            "window.__fenPreviewConsoleHarness"
+                                                            1 true))
+                      app-at (pick-values 1
+                                          (string.find page "console.log('hi')" 1 true))]
+                  (assert.is_true (> harness-at 15))
+                  (assert.is_true (< harness-at app-at)))
+                (assert.are.equal 1 (select 2 (string.gsub page "__fenPreviewConsoleHarness" "")))
+                (assert.is_truthy (string.find page
+                                                  "Object.defineProperty(window, 'console'"
+                                                  1 true))
+                (assert.is_truthy (string.find page "configurable: false" 1 true))
+                ;; The host is the sole consumer; the harness must not keep a
+                ;; second, dead entries ring in the iframe.
+                (assert.is_nil (string.find page "entries.push" 1 true))
+                ;; Re-entry calls the browser's true original, not the app's
+                ;; replacement, and assigning the wrapper back is ignored.
+                (assert.is_truthy (string.find page
+                                                  "if (sending) return original.apply(consoleObject, arguments);"
+                                                  1 true))
+                (assert.is_truthy (string.find page "if (value === wrapped) return;" 1 true))
+                (assert.is_truthy (string.find page
+                                                  "if (sendingOnError) return trueOnError ? trueOnError.apply(this, arguments) : false;"
+                                                  1 true))
+                (assert.is_truthy (string.find page "if (value === onError) return;" 1 true))
                 ;; the external references themselves are gone (inlined)
                 (assert.is_nil (string.find page "href=\"style.css\"" 1 true))
                 (assert.is_nil (string.find page "src=\"app.js\"" 1 true))))))
+
+        (it "covers the exact console.log and window.onerror save-and-wrap idiom"
+          (fn []
+            (let [kv (make-kv)]
+              (put-file kv "/index.html"
+                        (.. "<!doctype html><script>"
+                            "var orig = console.log; console.log = function(){ orig.apply(console, arguments); };"
+                            "var onerrorOrig = window.onerror; window.onerror = function(){ return onerrorOrig.apply(this, arguments); };"
+                            "</script>"))
+              (let [(page _) (html.build-page kv "/index.html")]
+                ;; These are the idioms the harness must survive, not a
+                ;; different assignment shape that would miss the regression.
+                (assert.is_truthy (string.find page
+                                                  "var orig = console.log; console.log = function()"
+                                                  1 true))
+                (assert.is_truthy (string.find page
+                                                  "var onerrorOrig = window.onerror; window.onerror = function()"
+                                                  1 true))
+                (assert.is_truthy (string.find page "sending = false" 1 true))
+                (assert.is_truthy (string.find page "sendingOnError = false" 1 true))))))
+
+        (it "keeps console capture after the exact delete-console.log attempt"
+          (fn []
+            (let [kv (make-kv)]
+              (put-file kv "/index.html"
+                        (.. "<!doctype html><script>"
+                            "var deleteResult = delete console.log; console.log('after-delete');"
+                            "</script>"))
+              (let [(page _) (html.build-page kv "/index.html")]
+                ;; The generated accessor is non-configurable, so delete is a
+                ;; false/no-op in the app and the subsequent call still reaches
+                ;; the wrapper; keep both exact operations in the fixture.
+                (assert.is_truthy (string.find page "delete console.log" 1 true))
+                (assert.is_truthy (string.find page "console.log('after-delete')" 1 true))
+                (assert.is_truthy (string.find page "configurable: false" 1 true))))))
 
         (it "leaves absolute URL references untouched"
           (fn []
@@ -130,12 +211,12 @@
 
     (describe "tool registration"
       (fn []
-        (it "registers the six preview.* tools with :always exposure"
+        (it "registers the preview.* tools with :always exposure"
           (fn []
             (let [registered []
                   api {:register (fn [kind spec] (table.insert registered [kind spec]))}]
               (preview.register api)
-              (assert.are.equal 6 (length registered))
+              (assert.are.equal 7 (length registered))
               (let [names []]
                 (each [_ [kind spec] (ipairs registered)]
                   (assert.are.equal :tool kind)
@@ -143,7 +224,7 @@
                   (table.insert names spec.name))
                 (table.sort names)
                 (assert.are.same
-                  [:preview_click :preview_eval :preview_fill
+                  [:preview_click :preview_console :preview_eval :preview_fill
                    :preview_query :preview_refresh :preview_screenshot]
                   names)))))))
 
@@ -185,6 +266,45 @@
               (assert.are.equal :query (. prev.requests 1 :method))
               (assert.are.equal "#app" (. prev.requests 1 :selector))
               (assert.is_truthy (string.find (text-of r) "\"count\"" 1 true)))))
+
+        (it "preview_click appends an uncaught-error marker when the buffer is non-empty"
+          (fn []
+            (let [(tool prev)
+                  (tool-named :preview_click
+                              (fn [_req] {:ok true :value {:clicked true}}))]
+              (table.insert prev.console {:level :error :args ["boom"] :uncaught true})
+              (let [r (tool.execute {:selector "#x"} {} nil)]
+                (assert.is_false r.is-error?)
+                (assert.is_truthy (string.find (text-of r)
+                                               "1 uncaught error since last check (use preview_console)"
+                                               1 true))))))
+
+        (it "preview_console drains entries and exposes error stacks"
+          (fn []
+            (let [(tool prev)
+                  (tool-named :preview_console (fn [_req] {:ok true}))]
+              (table.insert prev.console
+                            {:level :error :args ["boom"]
+                             :stack "Error: boom\\n at app.js:1" :uncaught true})
+              (let [first (tool.execute {} {} nil)
+                    second (tool.execute {} {} nil)]
+                (assert.is_false first.is-error?)
+                (assert.is_truthy (string.find (text-of first) "boom" 1 true))
+                (assert.is_truthy (string.find (text-of first) "app.js:1" 1 true))
+                (assert.are.equal "[]" (text-of second))))))
+
+        (it "does not send proxy-like userdata to cjson"
+          (fn []
+            (let [(tool prev)
+                  (tool-named :preview_console (fn [_req] {:ok true}))
+                  proxy (io.tmpfile)]
+              (assert.are.equal :userdata (type proxy))
+              (set _G.__fen_host.preview_console_drain (fn [] proxy))
+              (let [(ok? result) (pcall tool.execute {} {} nil)]
+                (assert.is_true ok?)
+                (assert.is_true result.is-error?)
+                (assert.is_truthy (string.find (text-of result)
+                                               "non-JSON data" 1 true))))))
 
         (it "preview_click reports an RPC failure as a tool error"
           (fn []

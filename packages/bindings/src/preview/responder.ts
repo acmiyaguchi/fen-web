@@ -78,10 +78,14 @@ export const PREVIEW_RESPONDER_SOURCE = String.raw`
 })();
 `;
 
+/** Token replaced in the Fennel console harness by wrapSrcdoc. */
+export const PREVIEW_CONSOLE_GENERATION_PLACEHOLDER = "__FEN_PREVIEW_GENERATION__";
+
 /** Wrap a caller-built preview page (assembled from the virtual FS in Fennel)
  * with the responder script, producing the iframe `srcdoc`. The responder is
  * appended last so it installs after the app's own scripts have defined the
  * globals `preview.eval` may reference. */
-export function wrapSrcdoc(html: string): string {
-  return `${html}\n<script>${PREVIEW_RESPONDER_SOURCE}</script>`;
+export function wrapSrcdoc(html: string, generation = 0): string {
+  const rendered = html.replaceAll(PREVIEW_CONSOLE_GENERATION_PLACEHOLDER, String(generation));
+  return `${rendered}\n<script>${PREVIEW_RESPONDER_SOURCE}</script>`;
 }
