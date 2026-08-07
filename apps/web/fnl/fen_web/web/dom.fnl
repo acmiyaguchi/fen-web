@@ -120,11 +120,11 @@
    {:id :fen-panels :tag :div :class :fen-panels}
    {:id :fen-inputbar :tag :form :class :fen-inputbar
     :listen [:submit]
-    :children [{:id :fen-input :tag :input :class :fen-input
-                :attrs [{:name :type :value :text}
-                        {:name :placeholder
-                         :value "Message fen…  (Enter to send)"}
-                        {:name :autocomplete :value :off}]}
+    :children [{:id :fen-input :tag :textarea :class :fen-input
+                :attrs [{:name :placeholder
+                         :value "Message fen…  (Enter to send; Shift+Enter for newline)"}
+                        {:name :autocomplete :value :off}
+                        {:name :rows :value 1}]}
                {:id :fen-send :tag :button :class :fen-send :text "Send"
                 :attrs [{:name :type :value :submit}]}]}
    {:id :fen-overlay :tag :div :class :fen-overlay}])
@@ -134,11 +134,11 @@
     (and ctx ctx.is-busy? (ctx.is-busy?))))
 
 (fn input-vnodes []
-  (let [out [{:id :fen-input :tag :input :class :fen-input
-              :attrs [{:name :type :value :text}
-                      {:name :placeholder
-                       :value "Message fen…  (Enter to send)"}
-                      {:name :autocomplete :value :off}]}
+  (let [out [{:id :fen-input :tag :textarea :class :fen-input
+              :attrs [{:name :placeholder
+                       :value "Message fen…  (Enter to send; Shift+Enter for newline)"}
+                      {:name :autocomplete :value :off}
+                      {:name :rows :value 1}]}
              {:id :fen-send :tag :button :class :fen-send :text "Send"
               :attrs [{:name :type :value :submit}]}]]
     (when (turn-busy?)

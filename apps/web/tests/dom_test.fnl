@@ -106,6 +106,8 @@
               (let [kids (h.child-ids "fen-app")]
                 (assert.are.equal 5 (length kids)))
               (assert.is_true (h.exists? "fen-input"))
+              (assert.are.equal :textarea (. (h.node "fen-input") :tag))
+              (assert.are.equal "1" (. (h.node "fen-input") :attrs :rows))
               (assert.is_true (. (h.node "fen-inputbar") :listeners :submit))
               ;; second call rebuilds nothing
               (dom.ensure-skeleton!)
@@ -204,10 +206,11 @@
             (let [h (setup)
                   captured {}]
               (dom.ensure-skeleton!)
-              (h.dom_apply [{:op :prop :id "fen-input" :name :value :value "hello there"}])
+              (h.dom_apply [{:op :prop :id "fen-input" :name :value
+                             :value "first line\nsecond line"}])
               (h.emit "fen-inputbar" "submit")
               (dom.pump-input! {:on-submit (fn [t] (set captured.text t))})
-              (assert.are.equal "hello there" captured.text)
+              (assert.are.equal "first line\nsecond line" captured.text)
               (assert.are.equal "" (. (h.node "fen-input") :props :value)))))
 
         (it "blank submit does not start a turn"

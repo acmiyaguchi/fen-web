@@ -54,11 +54,43 @@ async function main(): Promise<void> {
   const settingsRoot = document.getElementById("fen-settings");
   const appRoot = document.getElementById("fen-app");
   const workspaceRoot = document.getElementById("fen-workspace");
+  const previewRoot = document.getElementById("fen-preview");
   const openButton = document.getElementById("fen-open-settings");
-  if (!settingsRoot || !appRoot || !workspaceRoot || !openButton) {
+  if (!settingsRoot || !appRoot || !workspaceRoot || !previewRoot || !openButton) {
     throw new Error("fen-web demo: shell markup is missing required elements");
   }
   const appMount = appRoot;
+
+  // The preview host owns the iframe and creates it lazily, so keep the
+  // narrow-screen control in the shell rather than coupling the presenter to
+  // the preview binding. This flag intentionally lives only for this page
+  // session; a fresh page starts with the preview expanded.
+  let previewCollapsed = false;
+  const previewToggle = el(
+    "button",
+    {
+      type: "button",
+      class: "fen-preview-toggle",
+      "aria-controls": "fen-preview-frame",
+    },
+    "Hide preview",
+  );
+  const updatePreviewToggle = (): void => {
+    previewRoot.classList.toggle("collapsed", previewCollapsed);
+    previewToggle.setAttribute("aria-expanded", String(!previewCollapsed));
+    previewToggle.textContent = previewCollapsed ? "Show preview" : "Hide preview";
+  };
+  previewToggle.addEventListener("click", () => {
+    previewCollapsed = !previewCollapsed;
+    updatePreviewToggle();
+  });
+  previewRoot.prepend(previewToggle);
+  const previewFrameObserver = new MutationObserver(() => {
+    previewRoot.classList.toggle("has-frame", previewRoot.querySelector("iframe") !== null);
+  });
+  previewFrameObserver.observe(previewRoot, { childList: true });
+  previewRoot.classList.toggle("has-frame", previewRoot.querySelector("iframe") !== null);
+  updatePreviewToggle();
   const diagnostics = new DiagnosticsBuffer();
   diagnostics.setContext({
     fenVersion: FEN_VERSION,
@@ -177,6 +209,44 @@ async function main(): Promise<void> {
   let restartButton: HTMLButtonElement | undefined;
   let bootGeneration = 0;
   const STOP_TIMEOUT_MS = 3000;
+
+  // A textarea's native Enter inserts a newline. The DOM event queue only
+  // records the target value, not the key/modifier, so this small delegated
+  // shell handler is the narrowest place to distinguish Enter from
+  // Shift+Enter without changing the shared bindings contract. Enter submits
+  // through the existing form listener; Shift+Enter is left to the browser.
+  const resizePromptTextarea = (textarea: HTMLTextAreaElement): void => {
+    textarea.style.height = "auto";
+    const computed = window.getComputedStyle(textarea);
+    const maxHeight = Number.parseFloat(computed.maxHeight);
+    const minHeight = Number.parseFloat(computed.minHeight);
+    const desired = Math.max(textarea.scrollHeight, Number.isFinite(minHeight) ? minHeight : 0);
+    const height = Number.isFinite(maxHeight) ? Math.min(desired, maxHeight) : desired;
+    textarea.style.height = `${height}px`;
+    textarea.style.overflowY = desired > height ? "auto" : "hidden";
+  };
+  appMount.addEventListener("input", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLTextAreaElement && target.id === "fen-input") {
+      resizePromptTextarea(target);
+    }
+  });
+  appMount.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLTextAreaElement) || target.id !== "fen-input") return;
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    target.form?.requestSubmit();
+  });
+  appMount.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || form.id !== "fen-inputbar") return;
+    const textarea = form.querySelector<HTMLTextAreaElement>("#fen-input");
+    if (textarea) {
+      textarea.style.height = "";
+      textarea.style.overflowY = "hidden";
+    }
+  });
 
   // Stop is rendered by the busy-gated Fennel DOM model, but the click and
   // Escape paths deliberately terminate in the shell: DemoSession.cancel()

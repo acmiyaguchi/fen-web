@@ -1,0 +1,9 @@
+{
+  "name": "multiline assistant text",
+  "turns": [
+    {
+      "request": { "userText": "First line\nSecond line" },
+      "response": { "fixture": "happy.sse", "contentType": "text/event-stream" }
+    }
+  ]
+}
