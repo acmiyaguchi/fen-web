@@ -25,7 +25,17 @@ export function serializePreviewRpcResult(
   result: PreviewPollResult["result"],
 ): PreviewPollResult["result"] {
   if (!result || typeof result.value === "string" || result.value === undefined) return result;
-  return { ...result, value: JSON.stringify(result.value) };
+  try {
+    const text = JSON.stringify(result.value);
+    // JSON.stringify returns undefined for values such as functions and
+    // symbols. The host contract still requires every present non-string
+    // value to cross as JSON text, so use JSON null for those edge cases.
+    return { ...result, value: text === undefined ? "null" : text };
+  } catch {
+    // A hostile eval result (for example a BigInt) must not make the host
+    // seam throw into the VM. Keep the result textual and JSON-shaped.
+    return { ...result, value: "null" };
+  }
 }
 
 /** Minimal structural views of the DOM/window pieces WebHostPreview touches,
@@ -273,6 +283,10 @@ export class WebHostPreview implements HostPreview {
         method: req.method,
         selector: req.selector,
         value: req.value,
+        action: req.action,
+        text: req.text,
+        maxDepth: req.maxDepth,
+        maxSize: req.maxSize,
         expr: req.expr,
       },
       "*",

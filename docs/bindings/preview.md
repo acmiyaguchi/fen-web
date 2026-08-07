@@ -46,7 +46,7 @@ asserts the page assembler never emits the stored API key.
 | host fn | role |
 |---|---|
 | `preview_set_html(html)` | render `html` into the iframe (`preview_refresh`); creates the `<iframe sandbox="allow-scripts">` on first use |
-| `preview_rpc_start(req)` | begin one RPC (`{method, selector?, value?, expr?}`); returns a numeric id, non-blocking |
+| `preview_rpc_start(req)` | begin one RPC (`{method, selector?, value?, expr?, action?, text?, maxDepth?, maxSize?}`); returns a numeric id, non-blocking |
 | `preview_rpc_poll(id)` | `{done, result?}` — `result` is `{ok, value?, error?}` once the iframe replies; arbitrary non-string `value` payloads are JSON text before the result crosses into Lua |
 | `preview_rpc_dispose(id)` | drop terminal state for a completed RPC (mandatory cleanup) |
 | `preview_console_drain()` | synchronously drain iframe console/error entries since the last drain or `preview_set_html` |
@@ -98,18 +98,21 @@ tool returns a structured tool error instead of yielding forever.
 Registered demo-only through the per-owner manifest loader
 (`fen_web.web.boot.load-extension!` on `fen_web.web.preview.manifest`),
 via the ordinary public `:tool` register kind — the same path as the file tools.
-All seven use `:always` exposure so the agent can drive its app without a
-`tool_search` gate.
+`preview_refresh`, `preview_dom`, `preview_interact`, and `preview_console` use
+`:always` exposure so the agent can complete the see-and-test loop without a
+`tool_search` gate. The older specialized tools remain `:search` tools.
 
-| tool | effect |
-|---|---|
-| `preview_refresh` | assemble the vfs tree into one document and `set-html` it into the iframe |
-| `preview_query` | `document.querySelectorAll(selector)` → `{count, found, html, text, value}` |
-| `preview_click` | click the first match; appends an uncaught-error marker when one is buffered |
-| `preview_fill` | set an input's value + dispatch input/change; appends an uncaught-error marker when one is buffered |
-| `preview_eval` | evaluate a JS expression in the iframe; appends an uncaught-error marker when one is buffered |
-| `preview_screenshot` | a `<canvas>` → `toDataURL()` PNG data URL |
-| `preview_console` | drain new console/error entries, including `level`, bounded string `args`, and error `stack` |
+| tool | exposure | effect |
+|---|---|---|
+| `preview_refresh` | `:always` | assemble the vfs tree into one document and `set-html` it into the iframe |
+| `preview_dom` | `:always` | serialize a selected rendered element as bounded outerHTML; defaults to `body` and accepts `max_depth`/`max_size` |
+| `preview_interact` | `:always` | perform `click`, `type`, or `submit` on a selected element; `type` dispatches bubbling `input` and `change` events |
+| `preview_console` | `:always` | drain new console/error entries, including `level`, bounded string `args`, and error `stack` |
+| `preview_query` | `:search` | `document.querySelectorAll(selector)` -> `{count, found, html, text, value}` |
+| `preview_click` | `:search` | click the first match; appends an uncaught-error marker when one is buffered |
+| `preview_fill` | `:search` | set an input's value + dispatch input/change; appends an uncaught-error marker when one is buffered |
+| `preview_eval` | `:search` | evaluate a JS expression in the iframe; appends an uncaught-error marker when one is buffered |
+| `preview_screenshot` | `:search` | a `<canvas>` -> `toDataURL()` PNG data URL |
 
 `preview_console` drains only entries since the previous `preview_console` call
 (or the most recent `preview_refresh`). Refresh starts a fresh iframe document
@@ -123,10 +126,12 @@ for diagnostics bundles (the bundle includes at most the last 25 entries), so
 reading the tool does not erase the **Preview console (tail)** diagnostics
 section.
 
-The click/fill/eval marker is a best-effort peek taken around the RPC reply.
-Its absence must **not** be interpreted as proof that the preview had no errors:
-an error can be posted after the reply is handled. Use `preview_console` for the
-authoritative, consuming answer.
+The interact/click/fill/eval marker is a best-effort peek taken around the RPC
+reply. Its absence must **not** be interpreted as proof that the preview had no
+errors: an error can be posted after the reply is handled. Use
+`preview_console` for the authoritative, consuming answer. The DOM and console
+tools are intentionally separate, so an agent can interact, read console
+output, and then take a focused DOM snapshot as independent steps.
 
 ## The iframe harness
 
@@ -138,7 +143,13 @@ script. It wraps `console.log`, `warn`, `error`, `info`, and `debug`, plus
 stringified (circular values and DOM nodes are safe), capped per entry, and
 posted to the parent as bounded entries. The host-side aggregate returned by
 `preview_console_drain` is bounded to 65,536 serialized characters as described
-above. Console property accessors preserve
+above. The responder also handles the `dom` and `interact` RPC methods inside
+the iframe. DOM snapshots clone the selected node, trim descendants at the
+requested depth, and cap the final outerHTML at the requested size; the live
+application DOM is never changed. Interactions stay in the iframe: click uses
+the element's click path, type uses the native value setter when available and
+dispatches bubbling `input` and `change`, and submit dispatches a bubbling, cancelable submit event so form handlers
+run without attempting a sandboxed native navigation. Console property accessors preserve
 the capture wrappers when an app replaces an individual console method. The
 harness never calls into Lua; `preview_console` reads the host's already-buffered
 messages synchronously. The TypeScript doubles expose one synthetic-input seam,

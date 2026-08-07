@@ -126,8 +126,10 @@ cap is reached (the ring and per-entry bounds are documented in
 
 The same hard boundary applies to `preview_rpc_poll`: its `result.value` is
 already JSON text for every non-string value before the poll object reaches
-Wasmoon. String values remain unquoted text so the model sees the existing
-human-readable result, and an absent value remains absent. `WebHostPreview`,
+Wasmoon. String values remain unquoted text so the model sees the human-readable
+DOM snapshot or result, and an absent value remains absent. `WebHostPreview`,
 `FakePreview`, and the `apps/web/src/boot.ts` host seam all preserve this
 contract; the Fennel `rpc-result->tool` wrapper rejects any other value rather
-than passing proxy userdata to cjson.
+than passing proxy userdata to cjson. The `dom` and `interact` methods use this
+same start/poll/dispose path; DOM serialization and all form interaction happen
+in the iframe responder, never through `contentDocument`.

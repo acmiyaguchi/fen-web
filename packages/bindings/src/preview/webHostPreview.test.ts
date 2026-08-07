@@ -217,6 +217,60 @@ test("an RPC completes when the matching iframe window replies", () => {
   assert.deepEqual(poll.result, { ok: true, value: '{"count":1}' });
 });
 
+test("DOM and interaction RPCs relay their bounded command fields", () => {
+  const dom = makeFakeDom();
+  const preview = new WebHostPreview({ document: dom.document, window: dom.window });
+  preview.setHtml("<main></main>");
+  dom.fireLoad();
+
+  const domId = preview.rpcStart({
+    method: "dom",
+    selector: "#app",
+    maxDepth: 2,
+    maxSize: 512,
+  });
+  const interactId = preview.rpcStart({
+    method: "interact",
+    action: "type",
+    selector: "#name",
+    text: "Ada",
+  });
+  assert.equal(dom.posted.length, 2);
+  assert.deepEqual(dom.posted[0].message, {
+    __fenPreview: true,
+    id: domId,
+    method: "dom",
+    selector: "#app",
+    value: undefined,
+    action: undefined,
+    text: undefined,
+    maxDepth: 2,
+    maxSize: 512,
+    expr: undefined,
+  });
+  assert.deepEqual(dom.posted[1].message, {
+    __fenPreview: true,
+    id: interactId,
+    method: "interact",
+    selector: "#name",
+    value: undefined,
+    action: "type",
+    text: "Ada",
+    maxDepth: undefined,
+    maxSize: undefined,
+    expr: undefined,
+  });
+
+  dom.dispatchMessage({
+    data: { __fenPreview: true, id: domId, result: { ok: true, value: "<main>...</main>" } },
+    source: dom.contentWindow,
+  });
+  assert.deepEqual(preview.rpcPoll(domId), {
+    done: true,
+    result: { ok: true, value: "<main>...</main>" },
+  });
+});
+
 test("SECURITY: a reply from a foreign window source is ignored", () => {
   const dom = makeFakeDom();
   const preview = new WebHostPreview({ document: dom.document, window: dom.window });

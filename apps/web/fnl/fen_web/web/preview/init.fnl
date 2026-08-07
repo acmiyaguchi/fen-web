@@ -1,16 +1,16 @@
 ;; Sandboxed-iframe preview tools (fen-web#8): the differentiator from
 ;; fen#99 — the agent drives the very app it just built in the virtual FS.
 ;;
-;; This is a demo-only extension: it registers preview_refresh / preview_query
-;; / preview_click / preview_fill / preview_eval / preview_screenshot /
-;; preview_console through
+;; This is a demo-only extension: it registers preview_refresh / preview_dom /
+;; preview_interact / preview_query / preview_click / preview_fill /
+;; preview_eval / preview_screenshot / preview_console through
 ;; the ordinary public :tool register kind (fen.core.extensions.register.tool),
 ;; loaded via the per-owner manifest loader (fen_web.web.boot.load-extension!),
 ;; exactly like the file tools. Owner cleanup and reload therefore apply, and
 ;; the tools are scoped to the demo owner rather than added on an ad-hoc path.
 ;;
 ;; refresh re-renders the vfs tree into the iframe (host.preview.set-html);
-;; the other five drive the running app over the postMessage RPC channel
+;; the other tools drive the running app over the postMessage RPC channel
 ;; (host.preview rpc start/poll/dispose). The RPC is asynchronous (a round
 ;; trip to another execution context), so — like the fetch backend — each
 ;; tool polls and yields the turn coroutine between polls rather than blocking
@@ -187,6 +187,70 @@
                   (util.err "missing 'selector'")
                   (rpc-result->tool (M.rpc! {:method :query :selector args.selector} ?yield))))})
 
+(local dom-tool
+  {:name :preview_dom
+   :label "Preview DOM"
+   :snippet "Inspect the rendered preview DOM"
+   :description (.. "Return a bounded outerHTML snapshot of the rendered preview DOM. "
+                    "The optional selector defaults to body; use max_depth and "
+                    "max_size to keep the result focused and safe for context.")
+   :parameters {:type :object
+                :properties {:selector {:type :string
+                                        :description "Optional CSS selector (default body)"}
+                             :max_depth {:type :integer
+                                         :minimum 0
+                                         :maximum 12
+                                         :description "Maximum descendant depth (default 4)"}
+                             :max_size {:type :integer
+                                        :minimum 64
+                                        :maximum 32000
+                                        :description "Maximum serialized characters (default 12000)"}}}
+   :execute (fn [args _ctx ?yield]
+              (rpc-result->tool
+                (M.rpc! {:method :dom
+                         :selector (or args.selector "body")
+                         :maxDepth (util.int-arg (or args.max_depth args.depth) 4)
+                         :maxSize (util.int-arg (or args.max_size args.size) 12000)}
+                        ?yield)))} )
+
+(local interact-tool
+  {:name :preview_interact
+   :label "Preview interact"
+   :snippet "Click, type, or submit in the preview app"
+   :description (.. "Perform one action in the running preview app. Supported "
+                    "actions are click, type, and submit. type replaces the "
+                    "field value and dispatches input/change events so framework "
+                    "handlers observe the interaction; submit targets a form or "
+                    "a control inside one. Call preview_console or preview_dom "
+                    "afterward for composable verification.")
+   :parameters {:type :object
+                :properties {:action {:type :string
+                                      :enum ["click" "type" "submit"]
+                                      :description "Action to perform"}
+                             :selector {:type :string
+                                        :description "CSS selector of the target"}
+                             :text {:type :string
+                                    :description "Text for the type action"}}
+                :required [:action :selector]}
+   :execute (fn [args _ctx ?yield]
+              (let [action args.action
+                    selector args.selector]
+                (if (or (not action) (= action ""))
+                    (util.err "missing 'action'")
+                    (or (not selector) (= selector ""))
+                    (util.err "missing 'selector'")
+                    (not (or (= action "click") (= action "type") (= action "submit")))
+                    (util.err "'action' must be click, type, or submit")
+                    (= action "type")
+                    (if (= args.text nil)
+                        (util.err "missing 'text' for type action")
+                        (rpc-result->tool
+                          (M.rpc! {:method :interact :action action
+                                   :selector selector :text args.text} ?yield) true))
+                    (rpc-result->tool
+                      (M.rpc! {:method :interact :action action
+                               :selector selector} ?yield) true))))})
+
 (local click-tool
   {:name :preview_click
    :label "Preview click"
@@ -254,7 +318,8 @@
                 (M.rpc! {:method :screenshot :selector (?. args :selector)} ?yield)))})
 
 (local tool-specs
-  [refresh-tool query-tool click-tool fill-tool eval-tool screenshot-tool console-tool])
+  [refresh-tool dom-tool interact-tool query-tool click-tool fill-tool eval-tool
+   screenshot-tool console-tool])
 
 ;; Build a fresh spec table with specialized :search exposure rather than
 ;; mutating the shared module-level singleton in tool-specs (which register
@@ -262,11 +327,11 @@
 ;; added to this toolset, remains :always as the debugging lifeline.
 (fn with-exposure [spec]
   (let [s (collect [k v (pairs spec)] k v)]
-    ;; preview_refresh stays :always too: it is the entry point the system
-    ;; prompt names — a provider can only call tools whose schemas are in
-    ;; the request, and the render step must not require a tool_search hop.
+    ;; The refresh, DOM, interaction, and console tools form the core
+    ;; see-and-test loop and must be present without a tool_search hop.
     (set s.exposure
-         (if (or (= spec.name :preview_console) (= spec.name :preview_refresh))
+         (if (or (= spec.name :preview_console) (= spec.name :preview_refresh)
+                 (= spec.name :preview_dom) (= spec.name :preview_interact))
              :always
              :search))
     s))
@@ -274,7 +339,7 @@
 ;; @doc fen_web.web.preview.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the demo-only preview_refresh/query/click/fill/eval/screenshot/console tools through the per-owner :tool register kind. preview_refresh and preview_console are :always (the system-prompt entry point and the debugging lifeline); the rest are :search, discoverable via tool_search. Registers fresh spec tables so the shared module-level specs are never mutated.
+;; summary: Register the demo-only preview_refresh/dom/interact/query/click/fill/eval/screenshot/console tools through the per-owner :tool register kind. preview_refresh, preview_dom, preview_interact, and preview_console are :always; the legacy specialized tools are :search, discoverable via tool_search. Registers fresh spec tables so the shared module-level specs are never mutated.
 ;; tags: preview tools register extension
 (fn M.register [api]
   (each [_ spec (ipairs tool-specs)]

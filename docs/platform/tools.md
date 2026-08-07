@@ -16,7 +16,8 @@ small core workspace set is `:always` exposed; specialized browser tools are
 | `read`, `write`, `edit`, `grep`, `find`, `ls`, `delete`, `move` | always | Browser-native workspace tools over `host.kv`. Their schemas and result conventions mirror fen. Relative paths resolve against the tool context `cwd`; otherwise the virtual filesystem root is `/`. |
 | `tool_search` | always | Registry-generic port of fen's builtin tool search. It searches `ctx.agent.tools` for `:search`-exposed contributions and records activations in `agent.active-tool-names`; it does not depend on desktop-only process/filesystem infrastructure. |
 | `web_fetch` | search (opt-in) | Fetches an HTTP(S) URL through the existing `host.fetch_start`/`fetch_poll`/`fetch_dispose` seam. It is registered only when the web boot option `enableWebFetch` is explicitly `true`; the default is false. The host keeps a bounded head and the tool returns at most about 50KB, framed as untrusted web content. |
-| `preview_refresh`, `preview_query`, `preview_click`, `preview_fill`, `preview_eval`, `preview_screenshot` | search | Demo-only preview tools are activated through `tool_search`; `preview_console`, if present, remains `always` as the debugging lifeline. |
+| `preview_refresh`, `preview_dom`, `preview_interact`, `preview_console` | always | Core demo-only preview loop: render the vfs app, inspect bounded DOM, click/type/submit in the iframe, and read console output. |
+| `preview_query`, `preview_click`, `preview_fill`, `preview_eval`, `preview_screenshot` | search | Legacy specialized preview tools activated through `tool_search`; they remain available for focused queries, evaluation, and canvas capture. |
 
 `cwd` is also the base for relative tool paths when the agent supplies it in
 tool context. The virtual filesystem itself is rooted at `/` (the whole VFS is

@@ -7,6 +7,18 @@
     },
     {
       "request": { "toolResultId": "preview-starter-refresh-1" },
+      "response": { "fixture": "preview-starter-type.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-starter-type-1" },
+      "response": { "fixture": "preview-starter-submit.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-starter-submit-1" },
+      "response": { "fixture": "preview-starter-dom.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-starter-dom-1", "toolResultText": "Ship the iframe todo" },
       "response": { "fixture": "preview-starter-final.sse", "contentType": "text/event-stream" }
     }
   ]
