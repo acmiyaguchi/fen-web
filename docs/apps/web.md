@@ -169,6 +169,17 @@ the same runtime retains presenter state.
   `loadFenTree`); the vendored Fennel compiler and cjson stub are bundled
   as raw text and passed to `createFenRuntime` so its Node-only `fs`
   readers never run in-page (see [../runtime/boot.md](../runtime/boot.md)).
+  **Dev console forwarding.** During `vite dev` only, the index transform installs
+  a small host-page console bridge before `src/main.ts`. It observes `log`,
+  `info`, `warn`, `error`, `debug`, and `trace`, plus uncaught errors and
+  unhandled rejections, and sends bounded batches to the loopback/tailnet-only
+  `/__fen/console` middleware. The middleware prints compact `[web:*]` lines
+  (with terminal colors when available), rejects cross-site and oversized
+  requests, and is absent from the Pages build. The bridge is intentionally
+  host-page-only; the preview iframe's console remains available through
+  `preview_console` (#34). We evaluated `vite-plugin-terminal`, but did not
+  add it because this small custom bridge meets the need without a dependency.
+
 - **#8 — sandboxed iframe preview + `preview.*` tools (implemented).**
   `preview_refresh` re-renders the IndexedDB tree into a sandboxed
   `<iframe sandbox="allow-scripts">` (never `allow-same-origin`).
