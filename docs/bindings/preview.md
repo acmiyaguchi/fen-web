@@ -146,7 +146,7 @@ posted to the parent as bounded entries. The host-side aggregate returned by
 above. The responder also handles the `dom` and `interact` RPC methods inside
 the iframe. DOM snapshots serialize the selected node incrementally under a character
 budget, trim descendants at the requested depth, and never modify the live
-application DOM. Interactions stay in the iframe: click uses
+application DOM. `preview_dom` HTML-escapes text inside raw-text elements (`<script>`/`<style>`), so output will not byte-match authored inline script; its disabled-click guard covers form controls only (`pointer-events:none`, hidden, or overlaid elements still report `ok`). Interactions stay in the iframe: click uses
 the element's click path, type uses the native value setter when available and
 dispatches bubbling `input` and `change`, and submit dispatches a bubbling, cancelable submit event so form handlers
 run without attempting a sandboxed native navigation. Console property accessors preserve

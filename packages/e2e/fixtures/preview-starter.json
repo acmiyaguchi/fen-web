@@ -24,6 +24,17 @@
     {
       "request": { "toolResultId": "preview-starter-click-1" },
       "response": { "fixture": "preview-starter-final.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "userText": "Reject a click on the disabled preview button." },
+      "response": { "fixture": "preview-starter-disabled-click.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": {
+        "toolResultId": "preview-starter-disabled-click-1",
+        "toolResultText": "error: cannot click disabled button: #disabled-e2e-button"
+      },
+      "response": { "fixture": "preview-starter-disabled-final.sse", "contentType": "text/event-stream" }
     }
   ]
 }

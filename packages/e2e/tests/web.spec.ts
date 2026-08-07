@@ -156,6 +156,23 @@ test("drives the seeded starter todo through preview_interact and preview_dom", 
   await expect(frame.locator("#remaining-count")).toHaveText("0");
   await expect(frame.locator("#empty-state")).toHaveClass(/hidden/);
 
+  await frame.locator("body").evaluate((body) => {
+    const disabled = document.createElement("button");
+    disabled.id = "disabled-e2e-button";
+    disabled.disabled = true;
+    disabled.textContent = "Disabled";
+    body.append(disabled);
+  });
+
+  await submitPrompt(page, "Reject a click on the disabled preview button.");
+  await expectTranscript(page, "The disabled click was rejected.");
+  const disabledClickResult = router
+    .toolResults()
+    .find((text) => text.includes("cannot click disabled"));
+  expect(disabledClickResult, "disabled click error should reach the tool result").toContain(
+    "error: cannot click disabled button: #disabled-e2e-button",
+  );
+
   await router.assertComplete();
 });
 
