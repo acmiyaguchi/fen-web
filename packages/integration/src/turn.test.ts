@@ -228,6 +228,41 @@ test("wasmoon calls a synchronous JS __fen_host function synchronously from Lua 
   }
 });
 
+test("fennel_eval uses a scratch VM env and JSON text at the Wasmoon boundary", async () => {
+  const kv = makeSyncKv();
+  const rt = await createFenRuntime({
+    sources: buildSources(),
+    host: { kv },
+  });
+  try {
+    const calculation = await rt.doString(`
+      local tool = require("fen_web.tools.fennel_eval")
+      local result = tool.execute({expr = "{:answer (+ 40 2)}"}, {})
+      assert(result["is-error?"] == false)
+      return result.content[1].text
+    `);
+    assert.equal(calculation, '{"answer":42}');
+
+    kv.put("fs:/input.txt", "hello");
+    const files = await rt.doString(`
+      local tool = require("fen_web.tools.fennel_eval")
+      local result = tool.execute({expr = "(host.vfs.walk \\\"/\\\")"}, {})
+      assert(result["is-error?"] == false)
+      return result.content[1].text
+    `);
+    assert.equal(files, '["/input.txt"]');
+
+    const unserializable = await rt.doString(`
+      local tool = require("fen_web.tools.fennel_eval")
+      local result = tool.execute({expr = "(fn [])"}, {})
+      return result["is-error?"]
+    `);
+    assert.equal(unserializable, true);
+  } finally {
+    rt.close();
+  }
+});
+
 test("wasmoon UTF-8-decodes a Lua request string before the fetch stub encodes its wire body", async () => {
   const scripted = new ScriptedFetch();
   scripted.enqueue({ status: 204, chunks: [] });
@@ -402,11 +437,14 @@ test("one headless agent turn against a stub OpenAI Chat Completions provider, d
       `expected fen_web.tools registration to succeed, got error: ${result["tools-register-error"]}`,
     );
     assert.equal(result["tools-register-error"], undefined);
+    // Tool Search can activate specialized tools such as fennel_eval; the
+    // tool is executable but omitted from the provider's first request.
     assert.deepEqual(
       [...result["registered-tool-names"]].sort(),
       [
         "delete",
         "edit",
+        "fennel_eval",
         "find",
         "grep",
         "ls",
@@ -415,7 +453,7 @@ test("one headless agent turn against a stub OpenAI Chat Completions provider, d
         "tool_search",
         "write",
       ],
-      "expected the default browser-native workspace tools, without web_fetch",
+      "expected the default browser-native workspace tools plus search-gated fennel_eval, without web_fetch",
     );
 
     // 2. The session backend recorded the turn: both the user and
