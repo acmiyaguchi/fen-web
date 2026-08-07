@@ -290,6 +290,38 @@ function statusText(dom: FakeDom): string {
     .join(" ");
 }
 
+test("boot host exposes preview_dom and preview_interact values as JSON text", () => {
+  const preview = new FakePreview((req) =>
+    req.method === "dom"
+      ? { ok: true, value: "<main>snapshot</main>" }
+      : { ok: true, value: { action: "type", events: ["input", "change"] } },
+  );
+  const hostTable = buildDemoHostTable(
+    {
+      sources: new Map(),
+      fetchBackendSource: "",
+      kv: {},
+      dom: { apply: () => undefined },
+      preview,
+      fetch: new ScriptedFetch(),
+    },
+    new FetchPoller(new ScriptedFetch()),
+  );
+
+  const start = hostTable.preview_rpc_start as (req: unknown) => number;
+  const poll = hostTable.preview_rpc_poll as (id: number) => unknown;
+  const domId = start({ method: "dom", selector: "#app", maxDepth: 2, maxSize: 512 });
+  assert.deepEqual(poll(domId), {
+    done: true,
+    result: { ok: true, value: "<main>snapshot</main>" },
+  });
+  const interactId = start({ method: "interact", action: "type", selector: "#name", text: "Ada" });
+  assert.deepEqual(poll(interactId), {
+    done: true,
+    result: { ok: true, value: '{"action":"type","events":["input","change"]}' },
+  });
+});
+
 test("boot host exposes preview_rpc_poll values as JSON text", () => {
   const preview = new FakePreview(() => ({ ok: true, value: { clicked: true } }));
   const hostTable = buildDemoHostTable(

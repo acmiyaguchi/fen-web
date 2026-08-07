@@ -18,7 +18,14 @@
 // inbound messages originate from THIS iframe's window before trusting them.
 
 /** The RPC verbs the preview responder understands, one per preview.* tool. */
-export type PreviewRpcMethod = "query" | "click" | "fill" | "eval" | "screenshot";
+export type PreviewRpcMethod =
+  | "query"
+  | "click"
+  | "fill"
+  | "eval"
+  | "screenshot"
+  | "dom"
+  | "interact";
 
 export type PreviewConsoleLevel = "log" | "warn" | "error" | "info" | "debug";
 
@@ -40,6 +47,14 @@ export interface PreviewRpcRequest {
   selector?: string;
   /** fill: the value to set on the matched element. */
   value?: string;
+  /** interact: the action to perform on the matched element. */
+  action?: "click" | "type" | "submit";
+  /** interact/type: text to place in the matched field. */
+  text?: string;
+  /** dom: maximum descendant depth to include in the serialized snapshot. */
+  maxDepth?: number;
+  /** dom: maximum serialized character count. */
+  maxSize?: number;
   /** eval: the JavaScript expression to evaluate in the iframe. */
   expr?: string;
 }
@@ -64,8 +79,8 @@ export interface PreviewPollResult {
 
 /** The host.preview primitive. `setHtml` re-renders the preview document
  * (preview.refresh); the rpc* trio is the async postMessage bridge the
- * preview.query/click/fill/eval/screenshot tools drive; `preview_console`
- * drains the host-side console ring. */
+ * preview.dom/interact and specialized query/click/fill/eval/screenshot tools drive;
+ * `preview_console` drains the host-side console ring. */
 export interface HostPreview {
   /** Render `html` into the sandboxed iframe (creating the iframe on first use). */
   setHtml(html: string): void;

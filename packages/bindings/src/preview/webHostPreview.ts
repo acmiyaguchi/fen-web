@@ -25,7 +25,13 @@ export function serializePreviewRpcResult(
   result: PreviewPollResult["result"],
 ): PreviewPollResult["result"] {
   if (!result || typeof result.value === "string" || result.value === undefined) return result;
-  return { ...result, value: JSON.stringify(result.value) };
+  try {
+    const text = JSON.stringify(result.value);
+    if (text === undefined) return { ok: false, error: "result is not JSON-serializable" };
+    return { ...result, value: text };
+  } catch {
+    return { ok: false, error: "result is not JSON-serializable" };
+  }
 }
 
 /** Minimal structural views of the DOM/window pieces WebHostPreview touches,
@@ -273,6 +279,10 @@ export class WebHostPreview implements HostPreview {
         method: req.method,
         selector: req.selector,
         value: req.value,
+        action: req.action,
+        text: req.text,
+        maxDepth: req.maxDepth,
+        maxSize: req.maxSize,
         expr: req.expr,
       },
       "*",

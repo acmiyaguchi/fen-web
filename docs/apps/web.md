@@ -226,20 +226,27 @@ its fetch poller aborts all remaining transports before closing the runtime.
 - **#8 — sandboxed iframe preview + `preview.*` tools (implemented).**
   `preview_refresh` re-renders the IndexedDB tree into a sandboxed
   `<iframe sandbox="allow-scripts">` (never `allow-same-origin`).
-  `preview_query(selector)`, `preview_click(selector)`,
-  `preview_fill(selector, value)`, `preview_eval(expr)` drive the running
-  app via a `postMessage` RPC channel; `preview_screenshot` renders a
-  canvas → dataURL, and `preview_console` drains bounded console output and
-  uncaught errors. Click/fill/eval also append a terse marker when an uncaught
-  error is waiting. The RPC is the new `host.preview` primitive
-  (`packages/bindings/src/preview`, [../bindings/preview.md](../bindings/preview.md));
-  the page assembly (rendering the vfs tree, inlining same-tree
-  stylesheet/script refs) and the seven tools live in Fennel
-  (`apps/web/fnl/fen_web/web/preview`), registered demo-only through the
-  per-owner manifest loader (`fen_web.web.boot.load-extension!` on
-  `fen_web.web.preview.manifest`) — the same path the file tools use, not
-  an ad-hoc one. Like `host.fetch`, the RPC is asynchronous, so each tool
-  starts/polls/yields the turn coroutine between polls rather than blocking.
+  `preview_dom(selector, max_depth, max_size)` serializes a bounded outerHTML
+  snapshot from the iframe harness, while `preview_interact(action, selector,
+  text)` performs click/type/submit actions. Type uses the native value setter
+  when available and dispatches bubbling input/change events for framework
+  handlers; submit dispatches a bubbling, cancelable submit event without a
+  native navigation. These core
+  tools are `:always` exposed alongside `preview_refresh` and
+  `preview_console`. The older `preview_query(selector)`,
+  `preview_click(selector)`, `preview_fill(selector, value)`,
+  `preview_eval(expr)`, and `preview_screenshot` remain `:search` tools for
+  focused operations. All preview actions use a `postMessage` RPC channel; the
+  host relays results as JSON text and never reaches through contentDocument.
+  The RPC is the new `host.preview` primitive (`packages/bindings/src/preview`,
+  [../bindings/preview.md](../bindings/preview.md)); the page assembly
+  (rendering the vfs tree, inlining same-tree stylesheet/script refs) and the
+  tools live in Fennel (`apps/web/fnl/fen_web/web/preview`), registered
+  demo-only through the per-owner manifest loader
+  (`fen_web.web.boot.load-extension!` on `fen_web.web.preview.manifest`) — the
+  same path the file tools use, not an ad-hoc one. Like `host.fetch`, the RPC
+  is asynchronous, so each tool starts/polls/yields the turn coroutine between
+  polls rather than blocking.
 - **#9 — starter project.** A curated starter todo app is seeded into the
   IndexedDB-backed vfs on first load (open question in fen#99: curated
   starter vs. boot empty — resolved in favor of seeding, so the

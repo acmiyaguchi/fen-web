@@ -223,20 +223,21 @@
 
     (describe "tool registration"
       (fn []
-        (it "registers the seven preview.* tools; refresh+console :always, rest :search"
+        (it "registers nine preview.* tools; core loop tools are :always"
           (fn []
             (let [registered []
                   api {:register (fn [kind spec] (table.insert registered [kind spec]))}]
               (preview.register api)
-              (assert.are.equal 7 (length registered))
+              (assert.are.equal 9 (length registered))
               (let [names []]
                 (each [_ [kind spec] (ipairs registered)]
                   (assert.are.equal :tool kind)
-                  ;; preview_refresh (system-prompt entry point) and
-                  ;; preview_console (debugging lifeline) are always-visible;
-                  ;; the rest are tool_search-gated.
+                  ;; Refresh, DOM, interaction, and console are the core
+                  ;; see-and-test loop; specialized tools remain gated.
                   (assert.are.equal
                     (if (or (= spec.name :preview_refresh)
+                            (= spec.name :preview_dom)
+                            (= spec.name :preview_interact)
                             (= spec.name :preview_console))
                         :always
                         :search)
@@ -244,8 +245,9 @@
                   (table.insert names spec.name))
                 (table.sort names)
                 (assert.are.same
-                  [:preview_click :preview_console :preview_eval :preview_fill
-                   :preview_query :preview_refresh :preview_screenshot]
+                  [:preview_click :preview_console :preview_dom :preview_eval
+                   :preview_fill :preview_interact :preview_query
+                   :preview_refresh :preview_screenshot]
                   names)))))))
 
     (describe "refresh tool"
@@ -286,6 +288,64 @@
               (assert.are.equal :query (. prev.requests 1 :method))
               (assert.are.equal "#app" (. prev.requests 1 :selector))
               (assert.is_truthy (string.find (text-of r) "\"count\"" 1 true)))))
+
+        (it "preview_dom sends selector and bounds and returns serialized text"
+          (fn []
+            (let [(tool prev)
+                  (tool-named :preview_dom
+                              (fn [req]
+                                {:ok true
+                                 :value "<main><p>Ship the iframe todo</p></main>"}))
+                  r (tool.execute {:selector "#app" :max_depth 2 :max_size 512} {} nil)]
+              (assert.is_false r.is-error?)
+              (assert.are.equal "<main><p>Ship the iframe todo</p></main>" (text-of r))
+              (assert.are.equal :dom (. prev.requests 1 :method))
+              (assert.are.equal "#app" (. prev.requests 1 :selector))
+              (assert.are.equal 2 (. prev.requests 1 :maxDepth))
+              (assert.are.equal 512 (. prev.requests 1 :maxSize)))))
+
+        (it "preview_dom rejects an explicit empty selector and ignores undocumented aliases"
+          (fn []
+            (let [(tool prev) (tool-named :preview_dom (fn [_req] {:ok true :value "snapshot"}))
+                  empty-result (tool.execute {:selector ""} {} nil)
+                  alias-result (tool.execute {:depth 2 :size 512} {} nil)]
+              (assert.is_true empty-result.is-error?)
+              (assert.is_truthy (string.find (text-of empty-result) "missing 'selector'" 1 true))
+              (assert.is_false alias-result.is-error?)
+              (assert.are.equal 4 (. prev.requests 1 :maxDepth))
+              (assert.are.equal 12000 (. prev.requests 1 :maxSize)))))
+
+        (it "preview_interact type sends text and relies on input/change dispatch"
+          (fn []
+            (let [(tool prev)
+                  (tool-named :preview_interact
+                              (fn [_req] {:ok true :value {:action "type"}}))
+                  r (tool.execute {:action "type" :selector "#name"
+                                   :text "Ship the iframe todo"} {} nil)]
+              (assert.is_false r.is-error?)
+              (assert.are.equal :interact (. prev.requests 1 :method))
+              (assert.are.equal "type" (. prev.requests 1 :action))
+              (assert.are.equal "#name" (. prev.requests 1 :selector))
+              (assert.are.equal "Ship the iframe todo" (. prev.requests 1 :text)))))
+
+        (it "preview_interact submit sends the form selector"
+          (fn []
+            (let [(tool prev)
+                  (tool-named :preview_interact
+                              (fn [_req] {:ok true :value {:action "submit"}}))
+                  r (tool.execute {:action "submit" :selector "#form"} {} nil)]
+              (assert.is_false r.is-error?)
+              (assert.are.equal :interact (. prev.requests 1 :method))
+              (assert.are.equal "submit" (. prev.requests 1 :action))
+              (assert.are.equal "#form" (. prev.requests 1 :selector)))))
+
+        (it "preview_interact rejects an unknown action before the RPC"
+          (fn []
+            (let [(tool prev) (tool-named :preview_interact (fn [_] {:ok true}))
+                  r (tool.execute {:action "hover" :selector "#x"} {} nil)]
+              (assert.is_true r.is-error?)
+              (assert.is_truthy (string.find (text-of r) "click, type, or submit" 1 true))
+              (assert.are.equal 0 (length prev.requests)))))
 
         (it "preview_click appends an uncaught-error marker when the buffer is non-empty"
           (fn []

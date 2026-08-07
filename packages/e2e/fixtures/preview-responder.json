@@ -1,0 +1,37 @@
+{
+  "name": "exercise the real preview responder bounds and field setter",
+  "turns": [
+    {
+      "request": { "userText": "Render the preview responder fixture." },
+      "response": { "fixture": "preview-responder-refresh.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-responder-refresh-1" },
+      "response": { "fixture": "preview-responder-final.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "userText": "Inspect the deep preview DOM." },
+      "response": { "fixture": "preview-responder-deep.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-responder-deep-1", "toolResultText": "..." },
+      "response": { "fixture": "preview-responder-deep-final.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "userText": "Inspect the oversized preview DOM." },
+      "response": { "fixture": "preview-responder-size.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-responder-size-1", "toolResultText": "..." },
+      "response": { "fixture": "preview-responder-size-final.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "userText": "Verify the shadowed field receives typed input." },
+      "response": { "fixture": "preview-responder-type.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-responder-type-1", "toolResultText": "\"value\":\"typed\"" },
+      "response": { "fixture": "preview-responder-type-final.sse", "contentType": "text/event-stream" }
+    }
+  ]
+}

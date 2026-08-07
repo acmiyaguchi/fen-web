@@ -182,9 +182,9 @@ export function buildDemoHostTable(
     // aborts the transport before closing wasmoon.
     fetch_abort: (id: number) => poller.abort(id),
     // host.preview: setHtml (preview_refresh) + the async postMessage RPC
-    // bridge (preview_query/click/fill/eval/screenshot). Mirrors the
-    // fetch start/poll/dispose shape so the Fennel tools yield between
-    // polls (docs/bindings/preview.md).
+    // bridge (preview_dom/interact and specialized query/click/fill/eval/screenshot).
+    // Mirrors the fetch start/poll/dispose shape so the Fennel tools yield
+    // between polls (docs/bindings/preview.md).
     preview_set_html: (html: unknown) => deps.preview.setHtml(String(html)),
     preview_rpc_start: (req: unknown) => deps.preview.rpcStart(req as never),
     // Arbitrary iframe payloads must cross Wasmoon as JSON text. The

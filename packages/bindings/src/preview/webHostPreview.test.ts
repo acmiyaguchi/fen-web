@@ -102,6 +102,24 @@ test("wrapSrcdoc appends the responder after the page body", () => {
   assert.ok(doc.includes(PREVIEW_RESPONDER_SOURCE), "responder source is injected");
 });
 
+test("non-JSON-serializable RPC values become structured failures", () => {
+  const fake = new FakePreview(() => ({ ok: true, value: 1n }));
+  const id = fake.rpcStart({ method: "eval", expr: "1n" });
+  assert.deepEqual(fake.rpcPoll(id), {
+    done: true,
+    result: { ok: false, error: "result is not JSON-serializable" },
+  });
+
+  // The function-valued result is also rejected because JSON.stringify
+  // returns undefined rather than a JSON text value.
+  const functionPreview = new FakePreview(() => ({ ok: true, value: () => undefined }));
+  const functionId = functionPreview.rpcStart({ method: "eval", expr: "function () {}" });
+  assert.deepEqual(functionPreview.rpcPoll(functionId), {
+    done: true,
+    result: { ok: false, error: "result is not JSON-serializable" },
+  });
+});
+
 test("console messages are source-validated, bounded, and drain since the last check", () => {
   const dom = makeFakeDom();
   const preview = new WebHostPreview({
@@ -215,6 +233,60 @@ test("an RPC completes when the matching iframe window replies", () => {
   const poll = preview.rpcPoll(id);
   assert.equal(poll.done, true, "done after the iframe replies");
   assert.deepEqual(poll.result, { ok: true, value: '{"count":1}' });
+});
+
+test("DOM and interaction RPCs relay their bounded command fields", () => {
+  const dom = makeFakeDom();
+  const preview = new WebHostPreview({ document: dom.document, window: dom.window });
+  preview.setHtml("<main></main>");
+  dom.fireLoad();
+
+  const domId = preview.rpcStart({
+    method: "dom",
+    selector: "#app",
+    maxDepth: 2,
+    maxSize: 512,
+  });
+  const interactId = preview.rpcStart({
+    method: "interact",
+    action: "type",
+    selector: "#name",
+    text: "Ada",
+  });
+  assert.equal(dom.posted.length, 2);
+  assert.deepEqual(dom.posted[0].message, {
+    __fenPreview: true,
+    id: domId,
+    method: "dom",
+    selector: "#app",
+    value: undefined,
+    action: undefined,
+    text: undefined,
+    maxDepth: 2,
+    maxSize: 512,
+    expr: undefined,
+  });
+  assert.deepEqual(dom.posted[1].message, {
+    __fenPreview: true,
+    id: interactId,
+    method: "interact",
+    selector: "#name",
+    value: undefined,
+    action: "type",
+    text: "Ada",
+    maxDepth: undefined,
+    maxSize: undefined,
+    expr: undefined,
+  });
+
+  dom.dispatchMessage({
+    data: { __fenPreview: true, id: domId, result: { ok: true, value: "<main>...</main>" } },
+    source: dom.contentWindow,
+  });
+  assert.deepEqual(preview.rpcPoll(domId), {
+    done: true,
+    result: { ok: true, value: "<main>...</main>" },
+  });
 });
 
 test("SECURITY: a reply from a foreign window source is ignored", () => {
