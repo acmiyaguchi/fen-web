@@ -271,6 +271,23 @@ its fetch poller aborts all remaining transports before closing the runtime.
   entry renders through both `build-page` and `preview_refresh`), and the
   end-to-end seed assertion in `apps/web/src/bootTurn.test.ts`.
 
+- **#41 — workspace visibility (implemented).** The shell-owned panel in
+  `src/workspacePanel.ts` reads the durable `fs:` keyspace directly through a
+  separate `IndexedDbKv` connection. It displays implicit directories and
+  files in a collapsible tree; selecting a file shows its contents in a
+  read-only `<pre>`. Refresh and download first flush the VM's
+  `SyncKvCache`, so the viewer does not intentionally hide pending writes.
+  **Download ZIP** emits a hand-rolled classic ZIP with UTF-8 names, stored
+  entries, and CRC32 checksums; vfs `/` is removed from archive names so an
+  extraction cannot be treated as an absolute filesystem path. **Reset to
+  starter** is confirmation-guarded, stops the VM before clearing every `fs:`
+  key and `seed:starter-complete`, reseeds through `IndexedDbKv.seedIfEmpty`,
+  and boots a fresh session from the new snapshot. The reset leaves settings,
+  credentials, and session metadata untouched. Import/drop-in files remain a
+  stretch and are intentionally not included. Unit coverage for the tree,
+  reset, and ZIP round-trip is in `src/workspacePanel.test.ts`; browser e2e
+  does not exercise the download prompt, so ZIP parsing is tested in Node.
+
 ## Sandboxing invariant
 
 The preview iframe runs with `sandbox="allow-scripts"` only — **no**

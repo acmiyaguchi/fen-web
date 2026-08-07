@@ -2,6 +2,8 @@ import "./styles.css";
 import { MODEL_CATALOG, PROVIDERS, SettingsStore, providerById } from "./settings.js";
 import { bootDemoInBrowser, type DemoSession } from "./browserBoot.js";
 import { DiagnosticsBuffer, FEN_VERSION } from "./diagnostics.js";
+import { buildStarterFiles } from "./starter.js";
+import { createWorkspacePanel } from "./workspacePanel.js";
 
 // The single-page shell's chrome: a BYO-key settings gate plus the
 // `#fen-app` mount the Fennel DOM presenter renders into. Everything the
@@ -51,8 +53,9 @@ async function main(): Promise<void> {
   const store = new SettingsStore(DB_NAME);
   const settingsRoot = document.getElementById("fen-settings");
   const appRoot = document.getElementById("fen-app");
+  const workspaceRoot = document.getElementById("fen-workspace");
   const openButton = document.getElementById("fen-open-settings");
-  if (!settingsRoot || !appRoot || !openButton) {
+  if (!settingsRoot || !appRoot || !workspaceRoot || !openButton) {
     throw new Error("fen-web demo: shell markup is missing required elements");
   }
   const appMount = appRoot;
@@ -745,6 +748,37 @@ async function main(): Promise<void> {
     flushInFlight = tracked;
     return tracked;
   };
+  // The workspace panel reads the durable IndexedDB keyspace directly. Its
+  // reset callback stops the VM first, so no stale SyncKvCache write can race
+  // the destructive clear; the next boot takes a fresh snapshot and sees the
+  // newly seeded starter.
+  const workspacePanel = createWorkspacePanel({
+    root: workspaceRoot,
+    dbName: DB_NAME,
+    starterFiles: buildStarterFiles(),
+    flush: () => flushSession("workspace"),
+    onReset: async (storage) => {
+      // The reset stops the VM and blanks the mount before the steps that can
+      // fail, so route failures through handleFatal (like restartSession) —
+      // otherwise a mid-reset throw leaves the app area blank with only the
+      // small panel status and no fatal panel.
+      try {
+        await stopSession();
+        await storage.resetToStarter(buildStarterFiles());
+        appMount.replaceChildren();
+        if (await hasStartCredential(selectedProvider)) {
+          await startSession(selectedProvider);
+        } else {
+          await renderSettings();
+        }
+      } catch (err) {
+        await handleFatal(err);
+        throw err;
+      }
+    },
+    onError: (error) => console.error("fen-web workspace panel", error),
+  });
+
   let flushTimer: number | undefined;
   const armFlushTimer = (): void => {
     if (flushTimer !== undefined) return;
@@ -771,6 +805,13 @@ async function main(): Promise<void> {
   // and visibility-triggered flushes above are the primary strategy.
   window.addEventListener("beforeunload", () => {
     void flushSession("beforeunload");
+  });
+
+  // The panel owns a separate read connection so it can inspect the vfs while
+  // the VM is running. Closing it is only needed for an actual page teardown;
+  // keep it alive across bfcache pagehide/pageshow so the panel remains usable.
+  window.addEventListener("unload", () => {
+    void workspacePanel.dispose();
   });
 }
 
