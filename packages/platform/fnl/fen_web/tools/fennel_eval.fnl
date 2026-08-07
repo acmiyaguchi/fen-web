@@ -18,38 +18,32 @@
 (fn max-bytes [args]
   (let [raw (?. args :max_bytes)]
     (if (= raw nil)
-        DEFAULT-MAX-BYTES
+        {:limit DEFAULT-MAX-BYTES}
         (let [n (tonumber raw)]
-          (if (or (not n)
-                  (= n math.huge)
-                  (= n (- math.huge))
-                  (~= n n))
-              (error "max_bytes must be numeric")
+          (if (or (not n) (~= n n))
+              (error "max_bytes must be numeric" 0)
+              (= n (- math.huge))
+              (error "max_bytes must be finite or math.huge" 0)
+              (= n math.huge)
+              {:limit math.huge}
               ;; Keep a useful result for zero and negative caller values;
-              ;; the schema advertises the same lower bound.
-              (math.max 1 (math.floor n)))))))
+              ;; retain a note so an eventual size error explains the clamp.
+              (< n 1)
+              {:limit 1 :note "clamped to 1"}
+              {:limit (math.floor n)})))))
 
-(fn size-limit-error [max-bytes]
+(fn size-limit-error [max-bytes ?note]
   (error (.. "JSON result exceeds max_bytes (" (tostring max-bytes)
-             " bytes); increase max_bytes")))
+             " bytes"
+             (if ?note (.. "; " ?note) "")
+             "); increase max_bytes") 0))
 
 (fn string-json-size [text]
-  ;; Count JSON escapes without constructing the escaped string. This is an
-  ;; exact count for the ASCII escapes used by cjson and avoids rejecting a
-  ;; small valid result merely because it contains a long UTF-8 string.
-  (var size 2)
-  (for [i 1 (length text)]
-    (let [byte (string.byte text i)]
-      (if (or (= byte 34) (= byte 92))
-          (set size (+ size 2))
-          (< byte 32)
-          (if (or (= byte 8) (= byte 9) (= byte 10) (= byte 12) (= byte 13))
-              (set size (+ size 2))
-              (set size (+ size 6)))
-          (set size (+ size 1)))))
-  size)
+  ;; Use a cheap lower bound rather than scanning every byte. cjson's exact
+  ;; encoded length is checked below.
+  (+ 2 (length text)))
 
-(fn preflight-value [value max-bytes]
+(fn preflight-value [value max-bytes ?note]
   "Reject obvious oversized, cyclic, or non-JSON values before cjson builds a
    complete encoded string. Table punctuation is intentionally not included
    in the estimate, so the final exact length check remains authoritative."
@@ -58,7 +52,7 @@
     (fn add-size [amount]
       (set estimated-size (+ estimated-size amount))
       (when (> estimated-size max-bytes)
-        (size-limit-error max-bytes)))
+        (size-limit-error max-bytes ?note)))
     (fn visit [item]
       (let [kind (type item)]
         (if (= kind :nil)
@@ -71,7 +65,7 @@
             (add-size (string-json-size item))
             (= kind :table)
             (if (. active item)
-                (error "cyclic value cannot be encoded as JSON")
+                (error "cyclic value cannot be encoded as JSON" 0)
                 (do
                   (tset active item true)
                   (add-size 2)
@@ -86,26 +80,26 @@
             (= kind :userdata)
             (if (= item json.null)
                 (add-size 4)
-                (error "value of type userdata is not JSON serializable"))
+                (error "value of type userdata is not JSON serializable" 0))
             (error (.. "value of type " (tostring kind)
-                       " is not JSON serializable")))))
+                       " is not JSON serializable") 0))))
     (visit value)
     true))
 
-(fn encode-value [value max-bytes]
-  (preflight-value value max-bytes)
+(fn encode-value [value max-bytes ?note]
+  (preflight-value value max-bytes ?note)
   ;; Truncating JSON would turn a valid result into invalid JSON. Fail
   ;; cleanly instead and let the caller request a larger bound.
   (let [encoded (json.encode value)]
     (when (> (length encoded) max-bytes)
-      (size-limit-error max-bytes))
+      (size-limit-error max-bytes ?note))
     encoded))
 
 (fn with-step-limit [thunk]
   ;; The inner pcall lets us clear the hook before re-raising. The outer pcall
   ;; in execute then turns this ordinary Lua error into a tool error.
   (let [(previous-hook previous-mask previous-count) (debug.gethook)
-        hook (fn [] (error "execution step limit exceeded"))]
+        hook (fn [] (error "execution step limit exceeded" 0))]
     (debug.sethook hook "" MAX-EXECUTION-STEPS)
     (let [(ok? value-or-error) (pcall thunk)]
       ;; Clear first so cleanup itself cannot be interrupted by the limit.
@@ -114,7 +108,7 @@
         (debug.sethook previous-hook previous-mask previous-count))
       (if ok?
           value-or-error
-          (error value-or-error)))))
+          (error value-or-error 0)))))
 
 ;; @doc fen_web.tools.fennel_eval.execute
 ;; kind: function
@@ -127,18 +121,21 @@
       (let [(ok? value-or-error)
             (pcall
               (fn []
-                (with-step-limit
-                  (fn []
-                    (let [max-bytes (max-bytes args)
-                          kv (util.get-kv)
-                          value (fennel.eval args.expr
+                (let [options (max-bytes args)
+                      max-bytes options.limit
+                      max-bytes-note options.note
+                      kv (util.get-kv)
+                      value (with-step-limit
+                              (fn []
+                                (fennel.eval args.expr
                                              {:env (helpers.scratch-env
                                                      kv ctx ?yield-fn)
-                                              :filename "fennel_eval"})]
-                      ;; fennel.eval is intentionally consumed in a single
-                      ;; value position: extra values from (values ...) are
-                      ;; dropped at the tool JSON boundary.
-                      (encode-value value max-bytes))))))]
+                                              :filename "fennel_eval"})))]
+                  ;; fennel.eval is intentionally consumed in a single value
+                  ;; position: extra values from (values ...) are dropped at
+                  ;; the tool JSON boundary. Result sizing and encoding happen
+                  ;; after the user step hook is cleared.
+                  (encode-value value max-bytes max-bytes-note))))]
         (if ok?
             (util.ok value-or-error)
             (util.err (.. "fennel_eval: " (tostring value-or-error)))))))

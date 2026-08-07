@@ -372,6 +372,19 @@
               (assert.are.equal 42 decoded.answer)
               (assert.are.same [1 2 3] decoded.items))))
 
+        (it "handles large strings and tables under the default limits"
+          (fn []
+            (let [large-string (fennel-eval-tool.execute
+                                {:expr "(string.rep \"x\" 20000)"}
+                                {})
+                  large-table (fennel-eval-tool.execute
+                               {:expr "(let [records []] (for [i 1 500] (table.insert records {:id i :name (tostring i)})) records)"}
+                               {})]
+              (assert.is_false large-string.is-error?)
+              (assert.are.equal 20002 (length (text-of large-string)))
+              (assert.is_false large-table.is-error?)
+              (assert.are.equal 500 (length (json.decode (text-of large-table)))))))
+
         (it "runs batch VFS operations through the explicit host.vfs facade"
           (fn []
             (write-tool.execute {:path "/input.txt" :content "hello"} {})
@@ -428,20 +441,37 @@
           (fn []
             (let [r (fennel-eval-tool.execute {:expr "(while true nil)"} {})]
               (assert.is_true r.is-error?)
-              (assert.is_truthy (string.find (text-of r) "execution step limit exceeded" 1 true)))))
+              (assert.is_truthy (string.find (text-of r)
+                                            "execution step limit exceeded" 1 true))
+              (assert.is_falsy (string.find (text-of r)
+                                           "fennel_eval.fnl:" 1 true)))))
 
         (it "validates and clamps max_bytes"
           (fn []
             (let [non-numeric (fennel-eval-tool.execute
                                {:expr "42" :max_bytes "nope"} {})
+                  unbounded (fennel-eval-tool.execute
+                             {:expr "(string.rep \"x\" 100)" :max_bytes math.huge} {})
                   too-small (fennel-eval-tool.execute
-                             {:expr "42" :max_bytes 0} {})
+                             {:expr "(string.rep \"x\" 2)" :max_bytes 0} {})
+                  negative (fennel-eval-tool.execute
+                            {:expr "(string.rep \"x\" 2)" :max_bytes -1} {})
                   oversized (fennel-eval-tool.execute
                              {:expr "(string.rep \"x\" 100)" :max_bytes 10} {})]
               (assert.is_true non-numeric.is-error?)
               (assert.is_truthy (string.find (text-of non-numeric)
                                             "max_bytes must be numeric" 1 true))
+              (assert.is_falsy (string.find (text-of non-numeric)
+                                           "fennel_eval.fnl:" 1 true))
+              (assert.is_false unbounded.is-error?)
               (assert.is_true too-small.is-error?)
+              (assert.is_truthy (string.find (text-of too-small)
+                                            "clamped to 1" 1 true))
+              (assert.is_falsy (string.find (text-of too-small)
+                                           "fennel_eval.fnl:" 1 true))
+              (assert.is_true negative.is-error?)
+              (assert.is_truthy (string.find (text-of negative)
+                                            "clamped to 1" 1 true))
               (assert.is_true oversized.is-error?))))
 
         (it "encodes nil as JSON null and drops extra return values"
