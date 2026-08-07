@@ -4,6 +4,7 @@ import {
   validateStarterFiles,
   WebHostDomApply,
   WebHostFetch,
+  WebHostNotify,
   WebHostPreview,
 } from "@fen-web/bindings";
 import { bootDemo, type DemoBootOptions, type DemoSession } from "./boot.js";
@@ -147,6 +148,7 @@ export async function bootDemoInBrowser(
   });
   const dom = new WebHostDomApply();
   preview = new WebHostPreview({ mountId: "fen-preview" });
+  const notify = new WebHostNotify();
 
   const session = await bootDemo(opts, {
     sources: buildDemoSources(),
@@ -158,6 +160,7 @@ export async function bootDemoInBrowser(
     // The sandboxed preview iframe mounts under #fen-preview (index.html);
     // it renders the IndexedDB app tree and never gets allow-same-origin.
     preview: preview!,
+    notify,
     fetch: new WebHostFetch(),
     flush: () => kv.flush(),
     dispose,

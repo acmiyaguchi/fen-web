@@ -17,6 +17,8 @@
 (local move-tool (require :fen_web.tools.move))
 (local tool-search (require :fen_web.tools.tool_search))
 (local web-fetch-tool (require :fen_web.tools.web_fetch))
+(local notify-tool (require :fen_web.tools.notify))
+(local events (require :fen.core.extensions.events))
 (local tools (require :fen_web.tools))
 (local preview (require :fen_web.web.preview))
 (local api-factory (require :fen.core.extensions.loader.api))
@@ -38,6 +40,7 @@
     (after_each
       (fn []
         (set _G.__fen_host nil)
+        (events.unregister-by-owner :notify-test)
         (register.unregister-by-owner :fen-web-tools-test)))
 
     (describe "read"
@@ -410,6 +413,98 @@
             (let [r (web-fetch-tool.execute {:url "https://example.test"} {} (fn []))]
               (assert.is_true r.is-error?))))))
 
+    (describe "notify"
+      (fn []
+        (it "sends a notification through the JSON-text host seam"
+          (fn []
+            (set _G.__fen_host
+                 {:notify (fn [title body]
+                            (assert.are.equal "Finished" title)
+                            (assert.are.equal "The turn is done." body)
+                            "{\"ok\":true,\"status\":\"sent\",\"fallback\":false}")})
+            (let [r (notify-tool.execute {:title "Finished"
+                                           :body "The turn is done."}
+                                          {})]
+              (assert.is_false r.is-error?)
+              (assert.are.equal "notification sent" (text-of r)))))
+
+        (it "returns an explicit fallback error and uses the fallback path"
+          (fn []
+            (set _G.__fen_host
+                 {:notify (fn [_ _]
+                            "{\"ok\":false,\"status\":\"fallback\",\"fallback\":true,\"error\":\"permission not granted\"}")})
+            (let [r (notify-tool.execute {:title "Needs input"} {})]
+              (assert.is_true r.is-error?)
+              (assert.are.equal "error: permission not granted; showed in-app notice instead" (text-of r)))))
+
+        (it "appends a fallback info row but not a rate-limited notice"
+          (fn []
+            (let [transcript []
+                  ingest {:append-event (fn [ev] (table.insert transcript ev))}
+                  _unsubscribe (events.on :*
+                                          (fn [ev] (ingest.append-event ev))
+                                          :notify-test)]
+              (var calls 0)
+              (set _G.__fen_host
+                   {:notify (fn [_ _]
+                              (set calls (+ calls 1))
+                              (if (= calls 1)
+                                  "{\"ok\":false,\"status\":\"fallback\",\"fallback\":true,\"error\":\"permission not granted\"}"
+                                  "{\"ok\":false,\"status\":\"rate-limited\",\"fallback\":false,\"error\":\"notification rate limited\"}"))})
+              (let [fallback (notify-tool.execute {:title "Needs input" :body "Choose a file."} {})
+                    limited (notify-tool.execute {:title "Retry"} {})]
+                (assert.is_true fallback.is-error?)
+                (assert.are.equal "error: permission not granted; showed in-app notice instead"
+                                  (text-of fallback))
+                (assert.is_true limited.is-error?)
+                (assert.are.equal "error: notification rate limited" (text-of limited))
+                (assert.are.equal 1 (length transcript))
+                (assert.are.equal :info (. transcript 1 :type))
+                (assert.is_truthy (string.find (. transcript 1 :text)
+                                              "Needs input" 1 true))))))
+
+        (it "sanitizes and caps notification title and body before the host and fallback transcript"
+          (fn []
+            (var seen-title nil)
+            (var seen-body nil)
+            (let [transcript []
+                  _ (events.on :*
+                                (fn [ev] (table.insert transcript ev))
+                                :notify-test)]
+              (set _G.__fen_host
+                   {:notify (fn [title body]
+                              (set seen-title title)
+                              (set seen-body body)
+                              "{\"ok\":false,\"status\":\"fallback\",\"fallback\":true,\"error\":\"permission not granted\"}")})
+              (let [r (notify-tool.execute
+                        {:title (.. (string.rep "t" 200) "\n\0tail")
+                         :body (.. (string.rep "b" 700) "\r\n\1tail")}
+                        {})]
+                (assert.is_true r.is-error?)
+                (assert.are.equal 120 (length seen-title))
+                (assert.are.equal 500 (length seen-body))
+                (assert.is_nil (string.find seen-title "[%c]"))
+                (assert.is_nil (string.find seen-body "[%c]"))
+                (assert.are.equal 1 (length transcript))
+                (assert.is_nil (string.find (. transcript 1 :text) "[%c]"))
+                (assert.is_truthy (string.find (. transcript 1 :text)
+                                              (string.rep "t" 120) 1 true))
+                (assert.is_truthy (string.find (. transcript 1 :text)
+                                              (string.rep "b" 500) 1 true))))))
+
+        (it "does not throw when the host notification seam is absent"
+          (fn []
+            (set _G.__fen_host {:kv kv})
+            (let [r (notify-tool.execute {:title "Unavailable"} {})]
+              (assert.is_true r.is-error?)
+              (assert.are.equal "error: permission not granted; showed in-app notice instead" (text-of r)))))
+
+        (it "requires a title"
+          (fn []
+            (let [r (notify-tool.execute {} {})]
+              (assert.is_true r.is-error?)
+              (assert.are.equal "error: missing 'title'" (text-of r)))))))
+
     (describe "ls"
       (fn []
         (it "lists immediate directory entries with bare names (no trailing / on dirs, matching fen's `ls -1`)"
@@ -430,14 +525,14 @@
 
     (describe "init registration"
       (fn []
-        (it "registers only the core workspace set and tool_search as :always"
+        (it "registers the core workspace set, tool_search, and notify as :always"
           (fn []
             (let [registered []
                   api {:register (fn [kind spec] (table.insert registered [kind spec]))}]
               (tools.register api)
-              (assert.are.equal 9 (length registered))
+              (assert.are.equal 10 (length registered))
               (let [names {}
-                    always-names [:read :write :edit :grep :find :ls :delete :move :tool_search]]
+                    always-names [:read :write :edit :grep :find :ls :delete :move :tool_search :notify]]
                 (each [_ [kind spec] (ipairs registered)]
                   (assert.are.equal :tool kind)
                   (assert.are.equal :always spec.exposure)

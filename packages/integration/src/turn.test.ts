@@ -411,6 +411,7 @@ test("one headless agent turn against a stub OpenAI Chat Completions provider, d
         "grep",
         "ls",
         "move",
+        "notify",
         "read",
         "tool_search",
         "write",

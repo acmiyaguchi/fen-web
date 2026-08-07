@@ -20,4 +20,5 @@
                   :fen_web.tools.move
                   :fen_web.tools.tool_search
                   :fen_web.tools.web_fetch
+                  :fen_web.tools.notify
                   :fen_web.tools]}

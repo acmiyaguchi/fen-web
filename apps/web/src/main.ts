@@ -1,5 +1,9 @@
 import "./styles.css";
 import { MODEL_CATALOG, PROVIDERS, SettingsStore, providerById } from "./settings.js";
+import {
+  browserNotificationPermission,
+  requestBrowserNotificationPermission,
+} from "@fen-web/bindings";
 import { bootDemoInBrowser, type DemoSession } from "./browserBoot.js";
 import { DiagnosticsBuffer, FEN_VERSION } from "./diagnostics.js";
 import { buildStarterFiles } from "./starter.js";
@@ -687,6 +691,50 @@ async function main(): Promise<void> {
         : provider.note,
     );
     form.append(notice);
+
+    const notificationPermission = browserNotificationPermission();
+    if (notificationPermission === "granted") {
+      form.append(
+        el(
+          "p",
+          { class: "settings-notice" },
+          "Browser notifications are enabled. The notify tool can alert you when the agent needs attention.",
+        ),
+      );
+    } else {
+      const permissionNotice = el(
+        "p",
+        { class: "settings-notice", role: "status" },
+        notificationPermission === "default"
+          ? "Optional: enable browser notifications from this settings panel."
+          : "Browser notifications are unavailable or permission was denied; the notify tool will use in-app transcript notices.",
+      );
+      form.append(permissionNotice);
+      if (notificationPermission === "default") {
+        const permissionButton = el(
+          "button",
+          { type: "button", class: "settings-clear" },
+          "Enable browser notifications",
+        );
+        permissionButton.addEventListener("click", () => {
+          void (async () => {
+            permissionButton.setAttribute("disabled", "disabled");
+            const result = await requestBrowserNotificationPermission();
+            if (result === "granted") {
+              permissionNotice.textContent = "Browser notifications enabled.";
+              permissionButton.remove();
+            } else if (result === "denied") {
+              permissionNotice.textContent = "Browser notifications were denied; in-app transcript notices remain enabled.";
+              permissionButton.remove();
+            } else {
+              permissionNotice.textContent = "Browser notifications are unavailable; in-app transcript notices remain enabled.";
+              permissionButton.remove();
+            }
+          })();
+        });
+        form.append(permissionButton);
+      }
+    }
 
     if (running) {
       form.append(
