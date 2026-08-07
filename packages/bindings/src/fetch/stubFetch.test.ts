@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { ScriptedFetch } from "./stubFetch.js";
-import { fromLuaBytes, toLuaBytes } from "./bytes.js";
+import { fromLuaBytes, utf8ByteLength } from "./bytes.js";
 
 test("ScriptedFetch delivers chunks in order via onChunk", async () => {
   const stub = new ScriptedFetch();
@@ -135,8 +135,8 @@ test("ScriptedFetch rejects non-ASCII request header values like WebHostFetch", 
   assert.equal(stub.lastRequest, undefined);
 });
 
-test("response chunks retain their intermediate byte-string representation", async () => {
-  const original = new Uint8Array([0, 1, 2, 255, 254, 128, 10, 13, 0]);
+test("response chunks are decoded as UTF-8 text and p.body matches streamed text", async () => {
+  const original = new TextEncoder().encode("café — 💥");
   const stub = new ScriptedFetch();
   stub.enqueue({ status: 200, chunks: [original] });
 
@@ -144,18 +144,65 @@ test("response chunks retain their intermediate byte-string representation", asy
   const result = await stub.fetch({
     method: "GET",
     url: "https://example.com",
-    onChunk: (bytes) => {
-      chunks.push(bytes);
+    onChunk: (text) => {
+      chunks.push(text);
     },
   });
 
-  assert.equal(chunks.length, 1);
-  assert.ok("body" in result);
-  if ("body" in result) {
-    assert.equal(result.body, chunks[0]);
+  assert.deepEqual(chunks, ["café — 💥"]);
+  assert.ok(!("error" in result));
+  if (!("error" in result)) {
+    assert.equal(result.body, chunks.join(""));
+    assert.equal(result.body, "café — 💥");
   }
+});
 
-  // The response-side intermediate representation is deterministic. Its
-  // later Lua marshalling is a separate, known response-direction issue.
-  assert.equal(toLuaBytes(original), chunks[0]);
+test("ScriptedFetch decodes a multi-byte character split across chunks", async () => {
+  const stub = new ScriptedFetch();
+  stub.enqueue({
+    status: 200,
+    chunks: [new Uint8Array([0xc3]), new Uint8Array([0xa9])],
+  });
+
+  const received: string[] = [];
+  const result = await stub.fetch({
+    method: "GET",
+    url: "https://example.com",
+    onChunk: (text) => {
+      received.push(text);
+    },
+  });
+
+  // The first wire chunk (0xc3) is only a partial multi-byte prefix, so it
+  // decodes to "" and is skipped; the é surfaces once 0xa9 completes it.
+  assert.deepEqual(received, ["é"]);
+  assert.ok(!("error" in result));
+  if (!("error" in result)) {
+    assert.equal(result.body, "é");
+    assert.equal(result.body, received.join(""));
+  }
+});
+
+test("ScriptedFetch applies the body byte cap at a UTF-8 character boundary", async () => {
+  const stub = new ScriptedFetch();
+  const prefix = "a".repeat(65535);
+  const wireText = `${prefix}é`;
+  stub.enqueue({ status: 200, chunks: [wireText] });
+
+  const received: string[] = [];
+  const result = await stub.fetch({
+    method: "GET",
+    url: "https://example.com",
+    accumulateBody: false,
+    onChunk: (text) => {
+      received.push(text);
+    },
+  });
+
+  assert.ok(!("error" in result));
+  if (!("error" in result)) {
+    assert.equal(result.body, prefix);
+    assert.equal(utf8ByteLength(result.body), 65535);
+    assert.equal(received.join(""), wireText);
+  }
 });

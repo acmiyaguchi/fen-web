@@ -1,4 +1,9 @@
-import { assertAsciiHeaders, fromLuaBytes, toLuaBytes } from "./bytes.js";
+import {
+  assertAsciiHeaders,
+  fromLuaBytes,
+  takeUtf8BytePrefix,
+  utf8ByteLength,
+} from "./bytes.js";
 import { ACCUMULATE_BODY_CAP } from "./types.js";
 import type { FetchRequestOptions, FetchResult, HostFetch } from "./types.js";
 
@@ -86,36 +91,56 @@ export class WebHostFetch implements HostFetch {
       });
 
       let bodyLen = 0;
+      let bodyCapReached = false;
       const bodyParts: string[] = [];
+      // Response bodies are text. Keep the decoder alive across reads because
+      // ReadableStream chunks may split a UTF-8 sequence; wasmoon's UTF-8
+      // marshalling then reproduces the original wire bytes in Lua.
+      const decoder = new TextDecoder("utf-8");
+
+      const deliverText = async (text: string): Promise<void> => {
+        // An empty decode (a wire chunk carrying only a partial multi-byte
+        // prefix) has nothing to deliver — skip it so it doesn't spend a
+        // poller chunk slot or re-arm the idle watchdog for no payload.
+        if (text.length === 0) return;
+        // Poll-based consumers may return a promise when their pending
+        // queue is full. Awaiting it keeps the reader from pulling the
+        // entire response ahead of Lua's next poll. The idle watchdog
+        // measures SERVER silence only: pause it while parked on the
+        // consumer (a hidden tab pauses rAF polling for arbitrarily long;
+        // that must buffer, not kill the turn) and re-arm before the next
+        // read.
+        clearIdle();
+        await opts.onChunk?.(text);
+        resetIdle();
+        if (accumulateBody) {
+          bodyParts.push(text);
+        } else if (!bodyCapReached) {
+          // ACCUMULATE_BODY_CAP is a UTF-8 byte cap. Keep only complete
+          // Unicode characters when the boundary falls mid-encoding, and
+          // STOP there: once a chunk is boundary-blocked the head is closed,
+          // so a later chunk can't splice bytes past the omitted character
+          // (the retained head stays a contiguous prefix, as the docs say).
+          const room = ACCUMULATE_BODY_CAP - bodyLen;
+          const head = takeUtf8BytePrefix(text, room);
+          bodyParts.push(head);
+          bodyLen += utf8ByteLength(head);
+          if (head.length < text.length) bodyCapReached = true;
+        }
+      };
 
       if (response.body) {
         reader = response.body.getReader();
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          const bytes = toLuaBytes(value);
-          // Poll-based consumers may return a promise when their pending
-          // queue is full. Awaiting it keeps the reader from pulling the
-          // entire response ahead of Lua's next poll. The idle watchdog
-          // measures SERVER silence only: pause it while parked on the
-          // consumer (a hidden tab pauses rAF polling for arbitrarily long;
-          // that must buffer, not kill the turn) and re-arm before the next
-          // read.
-          clearIdle();
-          await opts.onChunk?.(bytes);
-          resetIdle();
-          if (accumulateBody) {
-            bodyParts.push(bytes);
-          } else if (bodyLen < ACCUMULATE_BODY_CAP) {
-            // Bounded head only, matching fen's native FEN_ERROR_BODY_CAP
-            // contract for accumulate-body? false — enough for error
-            // diagnostics, not a full buffered response.
-            const room = ACCUMULATE_BODY_CAP - bodyLen;
-            const head = bytes.length > room ? bytes.slice(0, room) : bytes;
-            bodyParts.push(head);
-            bodyLen += head.length;
-          }
+          const text = decoder.decode(value, { stream: true });
+          await deliverText(text);
         }
+        // Flush a carried sequence (or the decoder's replacement character
+        // for malformed/incomplete UTF-8) after the final wire chunk.
+        const tail = decoder.decode();
+        if (tail.length > 0) await deliverText(tail);
       }
 
       return {

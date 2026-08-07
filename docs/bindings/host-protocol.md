@@ -75,20 +75,22 @@ backpressure promise by rejecting it with `FetchPollerDisposedError`
 (`code: "FETCH_POLLER_DISPOSED"`), so the host's `finally` runs and the
 underlying reader/connection is cancelled rather than leaked.
 
-## Byte and latin1 discipline
+## Response text and byte discipline
 
-wasmoon marshals JS strings into Lua strings via UTF-16/UTF-8-ish
-coercion, but Lua strings are plain byte arrays and HTTP bodies (SSE
-frames, JSON, occasionally binary) are not guaranteed valid UTF-8
-mid-stream — a chunk boundary can split a multi-byte sequence. Decoding as
-UTF-8 text would corrupt or throw.
+The fetch response path carries UTF-8 **text**. `WebHostFetch` and
+`ScriptedFetch` use one `TextDecoder("utf-8")` per response with streaming mode
+for each wire chunk and a final flush, so a browser chunk boundary may split a
+multi-byte sequence without corrupting it. `onChunk` and terminal `body` are
+ordinary JS strings containing that decoded text. Wasmoon then UTF-8-encodes
+the strings when they cross into Lua, reproducing valid response wire bytes
+exactly; this is the same text direction as the request contract.
 
-The bridge instead uses a latin1 (ISO-8859-1) 1:1 byte mapping: byte value
-N maps to JS code unit N, lossless for any byte 0-255. `toLuaBytes` /
-`fromLuaBytes` in `packages/bindings/src/fetch/bytes.ts` implement this
-(Node `Buffer` `'latin1'` encoding where available, chunked
-`String.fromCharCode` fallback otherwise). Every chunk crossing the
-JS/Lua boundary goes through this conversion — never `TextDecoder`/UTF-8.
+Binary response bodies are not supported through this string path. A binary
+API would need to expose byte arrays rather than Lua strings. When
+`accumulateBody` is false, `ACCUMULATE_BODY_CAP` remains a byte cap measured
+in UTF-8 bytes. The host keeps only complete Unicode characters, so a cap that
+would split a multi-byte character truncates immediately before that
+character. The poll handoff queue uses the same UTF-8 byte accounting.
 
 See also: [fetch.md](fetch.md), [kv.md](kv.md),
 [../architecture/seams.md](../architecture/seams.md).

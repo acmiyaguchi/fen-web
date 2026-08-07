@@ -1,10 +1,16 @@
-import { assertAsciiHeaders, fromLuaBytes, toLuaBytes } from "./bytes.js";
+import {
+  assertAsciiHeaders,
+  fromLuaBytes,
+  takeUtf8BytePrefix,
+  utf8ByteLength,
+} from "./bytes.js";
 import { ACCUMULATE_BODY_CAP } from "./types.js";
 import type { FetchRequestOptions, FetchResult, HostFetch } from "./types.js";
 
-/** A scripted response for ScriptedFetch. Chunks may be strings in the
- * Lua-facing stream representation or raw Uint8Arrays (converted with
- * toLuaBytes), letting tests exercise response-byte handling. */
+/** A scripted response for ScriptedFetch. Chunks model wire response
+ * chunks: authored JS strings are UTF-8 encoded, while Uint8Arrays are used
+ * for raw wire bytes (including tests that split a multi-byte sequence).
+ * Both forms pass through the same streaming UTF-8 decoder as WebHostFetch. */
 export interface ScriptedResponse {
   status: number;
   headers?: Record<string, string>;
@@ -84,8 +90,42 @@ export class ScriptedFetch implements HostFetch {
     const accumulateBody = opts.accumulateBody !== false;
     const bodyParts: string[] = [];
     let bodyLen = 0;
+    let bodyCapReached = false;
     let deliveredChunks = 0;
+    const decoder = new TextDecoder("utf-8");
     const idleTimeoutMs = opts.idleTimeoutMs && opts.idleTimeoutMs > 0 ? opts.idleTimeoutMs : 0;
+
+    const deliverText = async (text: string): Promise<void> => {
+      // Skip an empty decode (partial multi-byte prefix only) — parity with
+      // WebHostFetch: no wasted poller slot, no idle re-arm for no payload.
+      if (text.length === 0) return;
+      try {
+        // Match WebHostFetch: a poll-based sink can hold this delivery until
+        // the next poll drains its bounded pending queue. Parity note: the
+        // idle watchdog measures scripted SERVER delay only (delayMs above);
+        // time parked on the consumer never counts, and a dispose() while
+        // parked surfaces as a clean error result, mirroring WebHostFetch's
+        // catch-all.
+        await opts.onChunk?.(text);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(message);
+      }
+
+      if (accumulateBody) {
+        bodyParts.push(text);
+      } else if (!bodyCapReached) {
+        // ACCUMULATE_BODY_CAP is a UTF-8 byte cap. Keep only complete Unicode
+        // characters when the boundary falls mid-encoding, and STOP there so
+        // the retained head stays a contiguous prefix (parity with
+        // WebHostFetch — no post-cap splice from a later chunk).
+        const room = ACCUMULATE_BODY_CAP - bodyLen;
+        const head = takeUtf8BytePrefix(text, room);
+        bodyParts.push(head);
+        bodyLen += utf8ByteLength(head);
+        if (head.length < text.length) bodyCapReached = true;
+      }
+    };
 
     for (const chunk of response.chunks) {
       const delayMs = response.delayMs ?? 0;
@@ -100,15 +140,10 @@ export class ScriptedFetch implements HostFetch {
         await sleep(delayMs);
       }
 
-      const bytes = typeof chunk === "string" ? chunk : toLuaBytes(chunk);
+      const wireBytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
+      const text = decoder.decode(wireBytes, { stream: true });
       try {
-        // Match WebHostFetch: a poll-based sink can hold this delivery until
-        // the next poll drains its bounded pending queue. Parity note: the
-        // idle watchdog measures scripted SERVER delay only (delayMs above);
-        // time parked on the consumer never counts, and a dispose() while
-        // parked surfaces as a clean error result, mirroring WebHostFetch's
-        // catch-all.
-        await opts.onChunk?.(bytes);
+        await deliverText(text);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { error: message };
@@ -121,14 +156,15 @@ export class ScriptedFetch implements HostFetch {
       ) {
         return { error: response.abortMessage ?? "aborted" };
       }
+    }
 
-      if (accumulateBody) {
-        bodyParts.push(bytes);
-      } else if (bodyLen < ACCUMULATE_BODY_CAP) {
-        const room = ACCUMULATE_BODY_CAP - bodyLen;
-        const head = bytes.length > room ? bytes.slice(0, room) : bytes;
-        bodyParts.push(head);
-        bodyLen += head.length;
+    const tail = decoder.decode();
+    if (tail.length > 0) {
+      try {
+        await deliverText(tail);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: message };
       }
     }
 

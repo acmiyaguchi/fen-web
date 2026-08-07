@@ -25,11 +25,15 @@ export interface FetchRequestOptions {
   /** Abort if no new bytes arrive for this many ms. 0/undefined disables
    * the idle watchdog. */
   idleTimeoutMs?: number;
-  /** Streaming sink. Called with each response chunk as the transport's
-   * intermediate byte-string representation (see toLuaBytes). Optional —
-   * when omitted, only the accumulated body is returned. A promise may be
-   * returned to apply backpressure to a poll-based consumer. */
-  onChunk?: (bytes: string) => void | PromiseLike<void>;
+  /** Streaming sink. Called with each response chunk as UTF-8 text. The
+   * transport keeps a streaming decoder across wire chunks, so a chunk may
+   * be empty while it carries only a prefix of a multi-byte character. The
+   * resulting JS string crosses wasmoon as ordinary text and is re-encoded
+   * to the original UTF-8 bytes in Lua. Optional — when omitted, only the
+   * accumulated body is returned. A promise may be returned to apply
+   * backpressure to a poll-based consumer. Binary response data is not
+   * supported by this string path. */
+  onChunk?: (text: string) => void | PromiseLike<void>;
   /** Mirrors fen's :accumulate-body? (default true). When false, the
    * transport still streams every chunk through onChunk but only retains
    * a bounded head (ACCUMULATE_BODY_CAP bytes) of the body for error

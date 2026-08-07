@@ -1,37 +1,14 @@
-// Request/response byte conversion at the wasmoon boundary.
+// Text encoding helpers at the wasmoon boundary.
 //
 // Wasmoon owns Lua <-> JS string encoding: it UTF-8-transcodes strings in
 // both directions. The Fennel layer never hands latin1-coded bytes to JS
 // through wasmoon. Therefore request bodies arrive here as ordinary JS text
-// and must be encoded as UTF-8 before fetch().
-//
-// Response bodies are different: fetch() gives us arbitrary Uint8Array
-// chunks, including chunks that split a UTF-8 sequence. `toLuaBytes` keeps
-// those chunks in a one-code-unit-per-byte intermediate representation, but
-// the response direction's wasmoon marshalling is not byte-safe; that larger
-// response-side issue is intentionally left for a follow-up.
+// and must be encoded as UTF-8 before fetch(). Response bodies follow the
+// same text contract: the transport decodes wire bytes as UTF-8 before they
+// cross back into Lua, so wasmoon's UTF-8 re-encoding reproduces the wire
+// bytes rather than double-encoding a latin1 intermediate string.
 
-const CHUNK_SIZE = 0x8000;
-
-function hasBuffer(): boolean {
-  return typeof Buffer !== "undefined";
-}
-
-/** Convert response bytes to the intermediate string representation used by
- * the Lua-facing stream protocol. This is not UTF-8 decoding: each byte is
- * represented by one JS code unit so arbitrary response chunks can be held
- * without interpreting split multi-byte sequences. */
-export function toLuaBytes(bytes: Uint8Array): string {
-  if (hasBuffer()) {
-    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("latin1");
-  }
-  let out = "";
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    const slice = bytes.subarray(i, i + CHUNK_SIZE);
-    out += String.fromCharCode(...slice);
-  }
-  return out;
-}
+const UTF8_ENCODER = new TextEncoder();
 
 /** Encode a request body string as UTF-8.
  *
@@ -41,12 +18,38 @@ export function toLuaBytes(bytes: Uint8Array): string {
  * "café" by emitting E9 instead of C3 A9. A genuinely binary request body
  * is outside this string contract. */
 export function fromLuaBytes(s: string): Uint8Array {
-  return new TextEncoder().encode(s);
+  return UTF8_ENCODER.encode(s);
 }
 
-/** HTTP headers use the separate ASCII-only contract. Do not apply the
- * latin1 byte-string conversion to them: a non-ASCII header value is invalid
- * for this transport and must be rejected rather than silently re-encoded. */
+/** Return the number of bytes used by a JS text string in UTF-8. */
+export function utf8ByteLength(s: string): number {
+  return UTF8_ENCODER.encode(s).byteLength;
+}
+
+/**
+ * Keep the largest prefix of `text` that fits in `maxBytes` UTF-8 bytes.
+ * Iterating code points (rather than UTF-16 code units) means a surrogate
+ * pair is kept or omitted as a unit. The response body cap is a byte cap,
+ * but it must never manufacture a partial Unicode character.
+ */
+export function takeUtf8BytePrefix(text: string, maxBytes: number): string {
+  if (maxBytes <= 0 || text.length === 0) return "";
+
+  let used = 0;
+  let end = 0;
+  for (const codePoint of text) {
+    const size = utf8ByteLength(codePoint);
+    if (used + size > maxBytes) break;
+    used += size;
+    end += codePoint.length;
+  }
+  return text.slice(0, end);
+}
+
+/** HTTP header names and values use a separate ASCII-only contract. Do not
+ * apply a byte-string conversion to them: a non-ASCII header value is
+ * invalid for this transport and must be rejected rather than silently
+ * re-encoded. */
 export function assertAsciiHeaders(headers?: Record<string, string>): void {
   if (!headers) return;
 

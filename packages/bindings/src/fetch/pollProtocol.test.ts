@@ -223,7 +223,7 @@ test("dispose while WebHostFetch is parked cancels the reader and releases it", 
   const body = new ReadableStream<Uint8Array>({
     pull(controller) {
       pullCount++;
-      controller.enqueue(new Uint8Array([pullCount & 0xff]));
+      controller.enqueue(new TextEncoder().encode("x"));
     },
     cancel() {
       cancelled = true;
@@ -234,7 +234,7 @@ test("dispose while WebHostFetch is parked cancels the reader and releases it", 
   try {
     const poller = new FetchPoller(new WebHostFetch());
     const id = poller.start({ method: "GET", url: "https://example.com" });
-    for (let attempt = 0; attempt < 32 && pullCount < MAX_PENDING_CHUNKS + 1; attempt++) {
+    for (let attempt = 0; attempt < 128 && pullCount < MAX_PENDING_CHUNKS + 1; attempt++) {
       await flushMicrotasks();
     }
     assert.ok(
