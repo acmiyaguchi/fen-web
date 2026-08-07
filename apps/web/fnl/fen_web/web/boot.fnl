@@ -73,7 +73,7 @@
       "read/write/edit/find/grep/ls tools to work in it. When you build a web "
       "app, render it with preview_refresh; further preview tools (query/"
       "click/fill/eval/screenshot) and web_fetch are discoverable via "
-      "tool_search — search for them before assuming a capability is "
+      "tool_search; search for them before assuming a capability is "
       "missing. Use preview_console to see the app's console output and "
       "errors. Be concise."))
 
