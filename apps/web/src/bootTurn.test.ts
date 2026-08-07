@@ -57,6 +57,7 @@ function buildSources(): Map<string, FenSource> {
   // Flat provider dirs (real dotted names come from a rockspec, not the
   // directory layout) — same treatment as turn.test.ts and sources.ts.
   const anthropicDir = path.join(fenExtensions, "adapters", "providers", "anthropic");
+  const openaiDir = path.join(fenExtensions, "adapters", "providers", "openai");
   const sharedDir = path.join(fenExtensions, "adapters", "providers", "shared");
   const manual: Record<string, string> = {
     "fen.extensions.provider_anthropic.anthropic_messages": path.join(
@@ -65,6 +66,14 @@ function buildSources(): Map<string, FenSource> {
     ),
     "fen.extensions.provider_anthropic": path.join(anthropicDir, "init.fnl"),
     "fen.extensions.provider_anthropic.manifest": path.join(anthropicDir, "manifest.fnl"),
+    "fen.extensions.provider_openai.openai_completions": path.join(
+      openaiDir,
+      "openai_completions.fnl",
+    ),
+    "fen.extensions.provider_openai.openai_model_catalog": path.join(
+      openaiDir,
+      "openai_model_catalog.fnl",
+    ),
     "fen.extensions.provider_shared.streaming": path.join(sharedDir, "streaming.fnl"),
     "fen.extensions.provider_shared.retry": path.join(sharedDir, "retry.fnl"),
   };
@@ -121,9 +130,9 @@ function starterFilesFromDisk(): Record<string, string> {
 /** A table-backed synchronous kv (the SyncKv contract) seeded with the API
  * key under the exact path the `fen.util.path.backend` stub serves for
  * in-VM `path.getenv("<VAR>")`. */
-function makeSyncKv(backing?: Map<string, string>) {
+function makeSyncKv(backing?: Map<string, string>, apiKeyVar = "ANTHROPIC_API_KEY") {
   const store = backing ?? new Map<string, string>();
-  store.set("env/apikey/ANTHROPIC_API_KEY", KEY);
+  store.set(`env/apikey/${apiKeyVar}`, KEY);
   return {
     sync: true as const,
     get: (k: string) => store.get(k),
@@ -170,6 +179,59 @@ function anthropicSse(text: string): string[] {
   ];
 }
 
+/** OpenAI-compatible SSE fixture. Providers only send the final usage-only
+ * chunk when the request opted into stream_options.include_usage; making that
+ * relationship explicit keeps this fixture from masking a missing compat flag. */
+function openaiSse(text: string, requestedUsage: boolean): string[] {
+  const frame = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
+  const chunks = [
+    frame({ choices: [{ delta: { role: "assistant", content: text }, finish_reason: null }] }),
+    frame({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+  ];
+  if (requestedUsage) {
+    chunks.push(
+      frame({
+        choices: [],
+        usage: {
+          prompt_tokens: 8,
+          completion_tokens: text.split(" ").length,
+          total_tokens: 8 + text.split(" ").length,
+        },
+      }),
+    );
+  }
+  chunks.push("data: [DONE]\n\n");
+  return chunks;
+}
+
+/** Return a request-aware fixture transport: if M1 regresses and the boot
+ * omits compat.supportsUsageInStreaming, the simulated provider omits usage
+ * too, so the status-bar token assertion fails instead of passing by accident. */
+function openaiFixtureFetch(text: string): {
+  fetch: HostFetch;
+  requests: FetchRequestOptions[];
+} {
+  const requests: FetchRequestOptions[] = [];
+  return {
+    requests,
+    fetch: {
+      async fetch(opts: FetchRequestOptions): Promise<FetchResult> {
+        requests.push(opts);
+        const body = JSON.parse(opts.body ?? "{}") as {
+          stream_options?: { include_usage?: boolean };
+        };
+        const scripted = new ScriptedFetch();
+        scripted.enqueue({
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+          chunks: openaiSse(text, body.stream_options?.include_usage === true),
+        });
+        return scripted.fetch(opts);
+      },
+    },
+  };
+}
+
 function anthropicToolUseSse(name: string, id = "call-1"): string[] {
   const frame = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
   return [
@@ -214,6 +276,13 @@ function transcriptText(dom: FakeDom): string {
     .childIds("fen-transcript")
     .map((id) => dom.get(id).text)
     .join("\n");
+}
+
+function statusText(dom: FakeDom): string {
+  return ["fen-status-left", "fen-status-right"]
+    .flatMap((id) => dom.childIds(id))
+    .map((id) => dom.get(id).text)
+    .join(" ");
 }
 
 test("boot host exposes preview_console_drain as bounded JSON text", () => {
@@ -387,6 +456,134 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
   await runUntil(() => stopped, 3000);
   await stopPromise;
   assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
+});
+
+test("bootDemo drives one OpenRouter Chat Completions turn browser-direct", async () => {
+  const reply = "Hello from OpenRouter";
+  const recorder = openaiFixtureFetch(reply);
+  const dom = new FakeDom("fen-app");
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  const runUntil = async (cond: () => boolean, maxMs = 8000): Promise<void> => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < maxMs) {
+      const task = tasks.shift();
+      if (task) task();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+  const session = await bootDemo(
+    { provider: "openrouter", model: "anthropic/claude-haiku-4.5", maxTokens: 8192 },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(undefined, "OPENROUTER_API_KEY"),
+      dom,
+      preview: new FakePreview(),
+      fetch: recorder.fetch,
+      schedule,
+    },
+  );
+
+  await runUntil(() => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "presenter should boot before the OpenRouter turn");
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "hi" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await runUntil(
+    () => transcriptText(dom).includes(reply) && statusText(dom).includes("8/3 tok"),
+  );
+
+  assert.match(transcriptText(dom), /> hi/);
+  assert.match(transcriptText(dom), new RegExp(reply));
+  assert.equal(recorder.requests.length, 1, "expected exactly one OpenRouter request");
+  const req = recorder.requests[0];
+  assert.equal(req.url, "https://openrouter.ai/api/v1/chat/completions");
+  const body = JSON.parse(req.body ?? "{}") as {
+    model?: string;
+    max_completion_tokens?: number;
+    stream_options?: { include_usage?: boolean };
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  assert.equal(body.model, "anthropic/claude-haiku-4.5");
+  assert.equal(body.max_completion_tokens, 8192);
+  assert.equal(body.stream_options?.include_usage, true);
+  assert.match(statusText(dom), /8\/3 tok/, "compat usage must reach the token status bar");
+  assert.equal(dom.exists("fen-sr-cost"), false, "OpenRouter cost is intentionally unpriced");
+  assert.equal(body.messages?.[0]?.role, "system");
+  assert.equal(body.messages?.at(-1)?.role, "user");
+  assert.equal(body.messages?.at(-1)?.content, "hi");
+  const headers = (req.headers ?? {}) as Record<string, string>;
+  assert.equal(headers.authorization, `Bearer ${KEY}`);
+
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await runUntil(() => stopped, 3000);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after the OpenRouter turn");
+});
+
+test("bootDemo drives one OpenAI Chat Completions turn browser-direct", async () => {
+  const reply = "Hello from OpenAI";
+  const recorder = openaiFixtureFetch(reply);
+  const dom = new FakeDom("fen-app");
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  const runUntil = async (cond: () => boolean, maxMs = 8000): Promise<void> => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < maxMs) {
+      const task = tasks.shift();
+      if (task) task();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+  const session = await bootDemo(
+    { provider: "openai", model: "gpt-5.4-nano", maxTokens: 8192 },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(undefined, "OPENAI_API_KEY"),
+      dom,
+      preview: new FakePreview(),
+      fetch: recorder.fetch,
+      schedule,
+    },
+  );
+
+  await runUntil(() => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "presenter should boot before the OpenAI turn");
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "hi" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await runUntil(
+    () => transcriptText(dom).includes(reply) && statusText(dom).includes("8/3 tok"),
+  );
+
+  assert.match(transcriptText(dom), /> hi/);
+  assert.match(transcriptText(dom), new RegExp(reply));
+  assert.equal(recorder.requests.length, 1, "expected exactly one OpenAI request");
+  const req = recorder.requests[0];
+  assert.equal(req.url, "https://api.openai.com/v1/chat/completions");
+  const body = JSON.parse(req.body ?? "{}") as {
+    model?: string;
+    max_completion_tokens?: number;
+    stream_options?: { include_usage?: boolean };
+  };
+  assert.equal(body.model, "gpt-5.4-nano");
+  assert.equal(body.max_completion_tokens, 8192);
+  assert.equal(body.stream_options?.include_usage, true);
+  assert.match(statusText(dom), /8\/3 tok/, "compat usage must reach the token status bar");
+  assert.equal(dom.exists("fen-sr-cost"), true, "plain OpenAI model has best-effort pricing");
+  const headers = (req.headers ?? {}) as Record<string, string>;
+  assert.equal(headers.authorization, `Bearer ${KEY}`);
+
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await runUntil(() => stopped, 3000);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after the OpenAI turn");
 });
 
 test("bootDemo preserves an HTTP 429 provider error in the transcript and diagnostics", async () => {

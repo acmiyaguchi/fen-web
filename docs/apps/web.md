@@ -1,6 +1,6 @@
 # apps/web
 
-In progress. Issue #6 (DOM presenter) is implemented; #7-#9 are planned.
+In progress. Issue #6 (DOM presenter), #7-#9, and the BYO-key provider work for #31/#32 are implemented.
 
 Self-contained single page: IndexedDB-backed virtual FS, sandboxed iframe
 preview the agent can drive, BYO API key. No key-proxy infrastructure —
@@ -85,20 +85,51 @@ the same runtime retains presenter state.
   the old key snapshot is actually revoked. The same settings gate has a
   provider-specific **Model** dropdown. Its conservative static catalog is
   defined once in `src/settings.ts`; Anthropic offers `claude-haiku-4-5`
-  (the default), `claude-sonnet-5`, and `claude-opus-5`. In dev builds the
-  Codex provider's pinned `gpt-5.6-luna` (default), `gpt-5.6-sol`, and
-  `gpt-5.6-terra` entries are shown when that provider is selected. The
-  selected model is stored per provider under
+  (the default), `claude-sonnet-5`, and `claude-opus-5`. OpenAI offers the
+  Fen-documented `gpt-5.4-nano`. OpenRouter offers the namespaced,
+  best-effort `anthropic/claude-haiku-4.5` (default) and
+  `openai/gpt-5.4-nano`; its live `/models` catalog is authoritative outside
+  this static settings gate. In dev builds the Codex provider's pinned
+  `gpt-5.6-luna`
+  (default), `gpt-5.6-sol`, and `gpt-5.6-terra` entries are shown when that
+  provider is selected. The selected model is stored per provider under
   `settings/selected-model/<provider>` in the same IndexedDB-backed settings
-  store, so reload, **Restart**, and **Save & restart** use it. Production
-  builds expose only `"anthropic"`; dev builds may also expose
-  `"openai-codex"` through the local OAuth bridge. Unsupported providers are
-  rejected up front rather than silently routed. Provider order: Anthropic is wired
-  first because `api.anthropic.com` accepts direct-from-page calls (the
-  fetch backend adds the required `anthropic-dangerous-direct-browser-access`
-  header for that host, see [../bindings/fetch.md](../bindings/fetch.md));
-  OpenAI-compatible endpoints (incl. OpenRouter) follow as their provider
-  extensions land in the bundle. The browser workspace extension registers
+  store, so reload, **Restart**, and **Save & restart** use it. The web pricing
+  table includes a clearly marked, unverified/manual estimate for plain
+  OpenAI `gpt-5.4-nano` ($0.20/M input, $1.25/M output); this is not an
+  authoritative billing source. OpenRouter cost estimates are intentionally
+  omitted because its price varies by the underlying model, so those models
+  show token counts but no cost estimate rather than a silently guessed value.
+  Anthropic, OpenAI, and OpenRouter are BYO-key, browser-direct providers; Codex remains
+  dev-server-only through the local OAuth bridge. Unsupported providers are
+  rejected up front rather than silently routed. Anthropic is wired first
+  because `api.anthropic.com` accepts direct-from-page calls (the fetch
+  backend adds the required `anthropic-dangerous-direct-browser-access`
+  header for that host, see [../bindings/fetch.md](../bindings/fetch.md)).
+  OpenAI and OpenRouter use Fen's existing Chat Completions adapter with base
+  URLs `https://api.openai.com/v1` and `https://openrouter.ai/api/v1`,
+  respectively. Keys are stored under `env/apikey/OPENAI_API_KEY` or
+  `env/apikey/OPENROUTER_API_KEY` and are resolved in-VM through the same
+  diagnostics-secret path as Anthropic. There is no key proxy.
+
+  **CORS and servicing-basis report (#7, #31, #32).** On 2026-08-07, a
+  curl preflight probe with `Origin: https://fen-web.example.test`,
+  `Access-Control-Request-Method: POST`, and
+  `Access-Control-Request-Headers: authorization,content-type` returned:
+  OpenAI `HTTP/2 200` with `access-control-allow-origin:
+  https://fen-web.example.test`, `access-control-allow-headers:
+  authorization,content-type`, and `access-control-allow-methods: GET,
+  OPTIONS,POST`; OpenRouter `HTTP/2 204` with
+  `access-control-allow-origin: *`, an allow-list containing Authorization
+  and Content-Type, and POST in `access-control-allow-methods`. Both are
+  therefore currently marked `browserDirect: true`; this is an operational
+  probe, not a permanent provider guarantee. The servicing-basis decision
+  for the #7 thread is OpenRouter as the browser-direct star because its
+  documented CORS response is explicit and includes the browser-call
+  headers, while OpenAI's behavior should be re-probed if deployment fails.
+  OpenRouter's optional `HTTP-Referer`/`X-Title` attribution headers are not
+  sent: pinned Fen v0.17 has the `base-url` seam but no extra-headers option
+  (fen#492), and the read-only submodule cannot be changed in this lane. The browser workspace extension registers
   fen-compatible `read`/`write`/`edit`/`grep`/`find`/`ls` plus `glob`,
   `truncate`, guarded file-only `delete`/`move`, and registry-generic
   `tool_search`. `web_fetch` is deliberately **not registered by default**:
@@ -261,4 +292,8 @@ npm run e2e -w @fen-web/e2e
 
 The Playwright config starts `npm run build` followed by
 `npm run preview -w @fen-web/web` automatically. On CI, the Chromium download
-is cached and traces/reports are uploaded when the e2e job fails.
+is cached and traces/reports are uploaded when the e2e job fails. The OpenAI
+and OpenRouter providers are not added to this tier: making the deterministic
+OpenAI-compatible SSE fixture pass through the mock router would require a
+second router/route harness; the focused OpenRouter wire path is covered by
+`apps/web/src/bootTurn.test.ts`.

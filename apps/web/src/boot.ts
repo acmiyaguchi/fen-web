@@ -22,12 +22,13 @@ import type { DiagnosticsBuffer } from "./diagnostics.js";
 // DOM/fetch) lives in browserBoot.ts, which supplies the deps below.
 
 export interface DemoBootOptions {
-  /** Provider id — only "anthropic" is wired today (see docs/apps/web.md).
-   * Anything else is rejected up front rather than silently routed to
-   * Anthropic. The API key is NOT passed here: it is resolved in-VM via
+  /** Provider id — browser-direct Anthropic, OpenAI, and OpenRouter are
+   * wired, while the dev-only Codex OAuth provider uses its proxy. Anything
+   * else is rejected up front rather than silently routed to Anthropic. The
+   * API key is NOT passed here: it is resolved in-VM via
    * `path.getenv("<VAR>")` → kv path `env/apikey/<VAR>` served by the
-   * preloaded `fen.util.path.backend` stub (docs/platform/shims.md),
-   * the same credential seam the desktop provider uses. */
+   * preloaded `fen.util.path.backend` stub (docs/platform/shims.md), the same
+   * credential seam the desktop provider uses. */
   provider?: string;
   /** Model id; defaults to the provider's default when omitted. */
   model?: string;
@@ -199,9 +200,14 @@ export async function bootDemo(
   deps: DemoRuntimeDeps,
 ): Promise<DemoSession> {
   const provider = opts.provider ?? "anthropic";
-  if (provider !== "anthropic" && provider !== "openai-codex") {
+  if (
+    provider !== "anthropic" &&
+    provider !== "openai" &&
+    provider !== "openrouter" &&
+    provider !== "openai-codex"
+  ) {
     throw new Error(
-      `fen-web demo: unsupported provider "${provider}"; only "anthropic" and "openai-codex" are wired today`,
+      `fen-web demo: unsupported provider "${provider}"; only "anthropic", "openai", "openrouter", and "openai-codex" are wired today`,
     );
   }
 

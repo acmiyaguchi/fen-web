@@ -23,6 +23,16 @@
                                          2000 1000 3000 4000)]
           (assert.is_true (< (math.abs (- estimate 0.0123)) 0.000000001)))))
 
+    (it "includes the best-effort OpenAI nano rate and omits OpenRouter estimates"
+      (fn []
+        (let [p (pricing.for-model "gpt-5.4-nano")]
+          (assert.is_truthy p)
+          (assert.are.equal 0.20 p.input-per-million)
+          (assert.are.equal 1.25 p.output-per-million))
+        ;; OpenRouter pricing follows the underlying model and is deliberately
+        ;; documented as an omission rather than guessed from the namespace.
+        (assert.is_nil (pricing.for-model "openai/gpt-5.4-nano"))))
+
     (it "uses the sub-cent marker and omits unknown models"
       (fn []
         (assert.are.equal "<$0.001"
