@@ -4,6 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>fen-web demo</title>
+    <meta name="theme-color" content="#14171c" />
+    <!-- Critical inline style: styles.css arrives via the JS module graph,
+         so without this the first paint flashes the browser-default white. -->
+    <style>
+      html {
+        background: #14171c;
+        color-scheme: dark;
+      }
+    </style>
   </head>
   <body>
     <header class="topbar">
