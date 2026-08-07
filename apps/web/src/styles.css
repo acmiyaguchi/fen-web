@@ -108,6 +108,7 @@ body {
 .settings-actions {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .settings-save {
@@ -121,13 +122,15 @@ body {
   cursor: pointer;
 }
 
-.settings-clear {
+.settings-clear,
+.diagnostics-copy {
   background: transparent;
   color: var(--dim);
   border: 1px solid #39414d;
   border-radius: 4px;
   padding: 0.5rem 0.9rem;
   cursor: pointer;
+  font: inherit;
 }
 
 /* --- fatal VM/run-loop errors --- */
@@ -288,6 +291,14 @@ body {
 }
 .style-status {
   color: var(--dim);
+}
+
+.row-copy {
+  margin-left: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  color: var(--error);
+  font-size: 0.75rem;
+  vertical-align: middle;
 }
 
 /* --- overlays (ui.prompt / ui.select) --- */

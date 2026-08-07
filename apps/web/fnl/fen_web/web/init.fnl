@@ -112,13 +112,31 @@
    :message-appended true
    :model-catalog-updated true})
 
+;; High-frequency streaming deltas are presenter-facing (ingest folds them
+;; into the transcript) but must not reach the diagnostics ring: a long
+;; streamed answer would evict the llm-start/tool-call/error context the
+;; ring exists to preserve, and each delta would pay a full table marshal
+;; on the coroutine's synchronous path.
+(local DIAGNOSTICS-SKIP-EVENTS
+  {:assistant-text-delta true
+   :assistant-thinking-delta true})
+
 (fn M.register [api]
   (set state.api api)
 
   (api.on :*
           (fn [ev]
             (when (not (. PRESENTER-CONTROL-EVENTS ev.type))
-              (ingest.append-event ev))))
+              (ingest.append-event ev)
+              ;; One-way Lua -> JS observation seam. Keep the tap inside the
+              ;; non-control branch: :runtime-tick is emitted every frame and
+              ;; must not evict real turn events or marshal the whole agent
+              ;; table into JS 60 times per second. pcall is belt-and-braces
+              ;; protection against a hostile JS payload/observer.
+              (when (not (. DIAGNOSTICS-SKIP-EVENTS ev.type))
+                (let [h _G.__fen_host]
+                  (when (and h h.diagnostics_event)
+                    (pcall h.diagnostics_event ev)))))))
 
   ;; /reload re-runs register; re-mark the skeleton so the persisted DOM
   ;; model is reused rather than rebuilt.

@@ -81,6 +81,25 @@ see the top-level [README.md](../../README.md) non-goals.
   fallback. A restart without stored provider credentials returns to the
   settings gate instead of booting a VM that cannot resolve its key.
 
+  **Diagnostics and reporting.** The Settings panel has **Copy diagnostics**;
+  fatal panels, non-destructive page-error notices, and transcript error rows
+  have the same one-tap action. Reports are plain Markdown/text and include the
+  error and stack when applicable, provider/model, fen and fen-web versions,
+  browser UA, and the last 50 terse turn/bus events. A later preview-console
+  capture (#34) can fill the optional `Preview console (tail)` section; it is
+  intentionally not captured here. The shell does retain a small recent host
+  console tail for on-demand reports. Diagnostics are collected in JS at the
+  presenter `api.on :*` → `__fen_host.diagnostics_event` seam, never by
+  querying the VM during a coroutine. Request bodies are not recorded, and
+  high-frequency streaming deltas are excluded so a long answer cannot evict
+  the events that explain a failure. Bus-event summaries can, however,
+  include short excerpts of prompts, responses, and tool output — the bundle
+  says so in its header, and users should review before sharing publicly.
+  Before formatting, stored API-key values, authorization/x-api-key-style
+  headers, bearer/provider tokens, JWT-like values, and long high-entropy
+  token-looking strings are replaced with `[REDACTED]`. Clipboard writing uses
+  `navigator.clipboard.writeText` with a selection-based fallback for mobile.
+
   **Bundler/dev-server:** Vite (`apps/web/vite.config.ts`). `npm run dev
   -w @fen-web/web` serves the page; `npm run build` produces the static
   bundle. The fen submodule + fen-web Fennel trees are inlined at bundle

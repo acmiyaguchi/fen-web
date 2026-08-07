@@ -17,6 +17,7 @@ import {
   seedIfEmptyKv,
   validateStarterFiles,
 } from "@fen-web/bindings";
+import { DiagnosticsBuffer } from "./diagnostics.js";
 import { bootDemo, type DemoRuntimeDeps } from "./boot.js";
 
 // End-to-end proof that the #7 wiring boots the runtime + bindings + DOM
@@ -185,6 +186,7 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
   const recorder = recordingFetch(scripted);
   const dom = new FakeDom("fen-app");
   const kv = makeSyncKv();
+  const diagnostics = new DiagnosticsBuffer();
 
   // First-load seeding (fen-web#9) is a durable, atomic step against the
   // persistent store BEFORE the VM boots (browserBoot.ts does this with
@@ -222,6 +224,7 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
     preview: new FakePreview(),
     fetch: recorder.fetch,
     schedule,
+    diagnostics,
   };
 
   const session = await bootDemo({ provider: "anthropic", model: "claude-haiku-4-5" }, deps);
@@ -270,6 +273,35 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
     headers["anthropic-dangerous-direct-browser-access"],
     "true",
     "transport should add the Anthropic direct-browser CORS header",
+  );
+
+  // Fetch diagnostics retain only the useful request shape: header names are
+  // visible, while body/header values are never copied into the ring.
+  const fetchStart = diagnostics.recentEvents.find((event) => event.kind === "fetch:start");
+  const fetchDone = diagnostics.recentEvents.find((event) => event.kind === "fetch:done");
+  assert.ok(fetchStart, "fetch:start should be recorded");
+  assert.ok(fetchDone, "fetch:done should be recorded");
+  const startShape = JSON.parse(fetchStart.summary) as Record<string, unknown>;
+  const doneShape = JSON.parse(fetchDone.summary) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(startShape).sort(), ["headerNames", "method", "url"]);
+  assert.ok(Array.isArray(startShape.headerNames));
+  assert.equal(startShape.url, req.url);
+  assert.equal(doneShape.status, 200);
+  assert.equal(typeof doneShape.chunksThisPoll, "number");
+  assert.equal("body" in doneShape, false);
+  assert.equal("headers" in doneShape, false);
+  assert.equal(
+    diagnostics.recentEvents.some((event) => event.kind === "runtime-tick"),
+    false,
+    "control ticks must not consume diagnostics ring entries",
+  );
+  // Positive guard on the Fennel bus tap: fetch:* events come from the JS
+  // side, so require at least one event that could only have crossed the
+  // presenter's diagnostics_event seam. A broken tap must fail this, not
+  // pass vacuously via the negative assertion above.
+  assert.ok(
+    diagnostics.recentEvents.some((event) => !event.kind.startsWith("fetch:")),
+    "at least one presenter bus event should cross the diagnostics seam",
   );
 
   // Cooperative shutdown: stop() asks the run loop to quit and resolves once

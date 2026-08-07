@@ -9,6 +9,7 @@ import {
 import { bootDemo, type DemoBootOptions, type DemoSession } from "./boot.js";
 import { buildDemoSources } from "./sources.js";
 import { buildStarterFiles } from "./starter.js";
+import type { DiagnosticsBuffer } from "./diagnostics.js";
 
 // Vendored VM sources bundled as raw text (the runtime's Node fs readers
 // don't run in-page — see docs/runtime/boot.md's browser note). These
@@ -23,6 +24,8 @@ export type { DemoSession } from "./boot.js";
 export interface BrowserBootOptions extends DemoBootOptions {
   /** IndexedDB database name (kept overridable for tests). */
   dbName?: string;
+  /** Browser-side ring buffer for bus/fetch/fatal diagnostics. */
+  diagnostics?: DiagnosticsBuffer;
   /** Called after a fatal boot/run-loop error has been flushed and the VM closed. */
   onFatal?: (err: unknown) => void | Promise<void>;
 }
@@ -68,7 +71,25 @@ export async function bootDemoInBrowser(
   if (import.meta.env.DEV) {
     const res = await fetch("/__fen/codex-auth").catch(() => undefined);
     if (res?.ok) {
-      await kvBacking.put("//.config/fen/auth.json", await res.text());
+      const authJson = await res.text();
+      // The bridge response is the last JS-visible auth seam. Register both
+      // OAuth token values before the blob is handed to the VM so diagnostics
+      // can scrub them even when an auth/provider error echoes a token.
+      try {
+        const auth = JSON.parse(authJson) as Record<string, unknown>;
+        const codex = auth["openai-codex"];
+        if (codex && typeof codex === "object") {
+          const record = codex as Record<string, unknown>;
+          for (const key of ["access", "refresh", "access_token", "refresh_token"]) {
+            const token = record[key];
+            if (typeof token === "string") opts.diagnostics?.addSecret(token);
+          }
+        }
+      } catch {
+        // The VM will report malformed auth JSON; diagnostics must not alter
+        // that behavior or make the seed seam throw a different error.
+      }
+      await kvBacking.put("//.config/fen/auth.json", authJson);
     } else if (opts.provider === "openai-codex") {
       // Fail here with the real reason instead of letting the VM boot and
       // report a generic "no credentials in auth.json" later. 403 means a
@@ -103,6 +124,7 @@ export async function bootDemoInBrowser(
     fetch: new WebHostFetch(),
     flush: () => kv.flush(),
     dispose,
+    diagnostics: opts.diagnostics,
     onFatal: opts.onFatal,
   });
   handedOff = true;
