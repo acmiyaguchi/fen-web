@@ -270,7 +270,10 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
     diagnostics,
   };
 
-  const session = await bootDemo({ provider: "anthropic", model: "claude-haiku-4-5" }, deps);
+  const session = await bootDemo(
+    { provider: "anthropic", model: "claude-sonnet-5", maxTokens: 32000 },
+    deps,
+  );
 
   // Wait for the presenter skeleton to build and the run loop to be live.
   await runUntil(() => dom.exists("fen-inputbar") && dom.exists("fen-input"));
@@ -310,6 +313,15 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
   assert.equal(recorder.requests.length, 1, "expected exactly one provider request");
   const req = recorder.requests[0];
   assert.equal(req.url, "https://api.anthropic.com/v1/messages", "request URL should be Anthropic");
+  const parsedBody = req.body
+    ? (JSON.parse(req.body) as { model?: string; max_tokens?: number })
+    : undefined;
+  assert.equal(parsedBody?.model, "claude-sonnet-5");
+  assert.equal(
+    parsedBody?.max_tokens,
+    32000,
+    "catalog max_tokens must reach the wire, not the 8192 fallback",
+  );
   const headers = (req.headers ?? {}) as Record<string, string>;
   assert.equal(headers["x-api-key"], KEY, "auth header should carry the in-VM-resolved key");
   assert.equal(

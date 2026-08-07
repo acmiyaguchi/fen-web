@@ -1,5 +1,5 @@
 import "./styles.css";
-import { PROVIDERS, SettingsStore, providerById } from "./settings.js";
+import { MODEL_CATALOG, PROVIDERS, SettingsStore, providerById } from "./settings.js";
 import { bootDemoInBrowser, type DemoSession } from "./browserBoot.js";
 import { DiagnosticsBuffer, FEN_VERSION } from "./diagnostics.js";
 
@@ -376,15 +376,17 @@ async function main(): Promise<void> {
   // Boot exactly one VM. The key is already persisted to IndexedDB by the
   // caller; bootDemoInBrowser reads it from there (env/apikey/<VAR>) and
   // resolves it in-VM — no key is passed through here.
-  const startSession = async (providerId: string): Promise<void> => {
+  const startSession = async (providerId: string, modelId?: string): Promise<void> => {
     if (session) return;
     if (booting) {
       await booting;
       return;
     }
+    const model = modelId ?? (await store.getSelectedModel(providerId));
+    const maxTokens = MODEL_CATALOG[providerId]?.find((m) => m.id === model)?.maxTokens;
     fatalVisible = false;
     noticeVisible = false;
-    diagnostics.setContext({ provider: providerId });
+    diagnostics.setContext({ provider: providerId, model });
     // A fresh VM starts with an empty committed DOM model. Remove the old
     // presenter's nodes before its first create batch, or duplicate ids make
     // browser getElementById target the dead VM's nodes.
@@ -392,6 +394,8 @@ async function main(): Promise<void> {
     const generation = ++bootGeneration;
     const pending = (booting = bootDemoInBrowser({
       provider: providerId,
+      model,
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
       dbName: DB_NAME,
       diagnostics,
       onWriteBackError: (err) => showUnexpectedPageError(err),
@@ -528,6 +532,7 @@ async function main(): Promise<void> {
     restartButton = undefined;
     settingsRoot.replaceChildren();
     const provider = providerById(selectedProvider);
+    const selectedModel = await store.getSelectedModel(provider.id);
     // Keyless providers (empty envVar, e.g. openai-codex) authenticate via
     // dev-server-bridged OAuth creds — no key row, save just (re)starts.
     const needsKey = provider.envVar !== "";
@@ -561,6 +566,17 @@ async function main(): Promise<void> {
       keyRow.append(input);
       form.append(keyRow);
     }
+
+    const modelRow = el("label", { class: "settings-row" }, `${provider.label} model`);
+    const modelSelect = el("select", { id: "model-select" });
+    for (const model of provider.models) {
+      const label = `${model.label}${model.default ? " (default)" : ""}`;
+      const opt = el("option", { value: model.id }, label);
+      if (model.id === selectedModel) opt.setAttribute("selected", "selected");
+      modelSelect.append(opt);
+    }
+    modelRow.append(modelSelect);
+    form.append(modelRow);
 
     const notice = el(
       "p",
@@ -635,10 +651,11 @@ async function main(): Promise<void> {
             await store.setApiKey(provider.envVar, key);
           }
           await store.setSelectedProvider(provider.id);
-          // Replacing the key must revoke the old VM before a new one boots
-          // with the new key snapshot.
+          await store.setSelectedModel(provider.id, modelSelect.value);
+          // Replacing the key or model must revoke the old VM before a new one
+          // boots with the new persisted settings snapshot.
           await stopSession();
-          await startSession(provider.id);
+          await startSession(provider.id, modelSelect.value);
         } catch (err) {
           await handleFatal(err);
         } finally {
