@@ -30,12 +30,22 @@
            :output-per-million 25.0
            :cache-read-multiplier DEFAULT-CACHE-READ-MULTIPLIER
            :cache-write-multiplier DEFAULT-CACHE-WRITE-MULTIPLIER})
+    ;; OpenAI GPT-5.4 nano: conservative public-rate-shaped placeholder,
+    ;; $0.20/M input and $1.25/M output. This is unverified, manually
+    ;; maintained metadata (not a billing source); update it when the model's
+    ;; official rate is confirmed. OpenRouter models are intentionally absent:
+    ;; its price varies with the underlying namespaced model.
+    (tset prices "gpt-5.4-nano"
+          {:input-per-million 0.20
+           :output-per-million 1.25
+           :cache-read-multiplier DEFAULT-CACHE-READ-MULTIPLIER
+           :cache-write-multiplier DEFAULT-CACHE-WRITE-MULTIPLIER})
     prices))
 
 ;; @doc fen_web.web.pricing.for-model
 ;; kind: function
 ;; signature: (for-model model) -> {:input-per-million :output-per-million :cache-read-multiplier :cache-write-multiplier}|nil
-;; summary: Look up best-effort pricing by exact model id; unknown models have no estimate.
+;; summary: Look up best-effort pricing by exact model id; unknown models have no estimate. OpenRouter ids intentionally have no estimate because their underlying model prices vary.
 ;; tags: demo pricing cost cache
 (fn M.for-model [model]
   (. PRICES (tostring (or model ""))))

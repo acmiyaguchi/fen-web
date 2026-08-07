@@ -29,11 +29,33 @@ export interface ModelChoice {
  * the runtime's dynamic catalog event. Keep provider model ids in this one
  * place so the UI and its defaulting logic cannot drift apart.
  */
+// Keep provider ids here aligned with SUPPORTED-PROVIDERS in
+// apps/web/fnl/fen_web/web/boot.fnl: this TypeScript catalog controls what the
+// settings gate can select, while the Fennel set controls what the VM wires.
 export const MODEL_CATALOG: Readonly<Record<string, readonly ModelChoice[]>> = {
   anthropic: [
     { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", default: true },
     { id: "claude-sonnet-5", label: "Claude Sonnet 5", default: false, maxTokens: 32000 },
     { id: "claude-opus-5", label: "Claude Opus 5", default: false, maxTokens: 32000 },
+  ],
+  // Fen's plain OpenAI provider documents gpt-5.4-nano as its default
+  // Chat Completions model (fen/docs/providers.md and provider_help.fnl).
+  openai: [
+    { id: "gpt-5.4-nano", label: "GPT-5.4 nano", default: true, maxTokens: 8192 },
+  ],
+  // OpenRouter has no static catalog in Fen v0.17. These namespaced IDs are
+  // best-effort examples; a 404 costs no completion, and the provider's live
+  // model catalog remains authoritative. gpt-5.4-nano is grounded by the
+  // plain OpenAI catalog and avoids shipping the likely-404 Codex-adjacent
+  // gpt-5.5 id here.
+  openrouter: [
+    {
+      id: "anthropic/claude-haiku-4.5",
+      label: "Claude Haiku 4.5 (OpenRouter)",
+      default: true,
+      maxTokens: 8192,
+    },
+    { id: "openai/gpt-5.4-nano", label: "GPT-5.4 nano (OpenRouter)", default: false, maxTokens: 8192 },
   ],
   // The Codex provider is offered only by the dev server. These are the
   // stable ids already pinned by fen's Codex provider extension.
@@ -59,8 +81,8 @@ export interface ProviderChoice {
 /**
  * Provider order per docs/apps/web.md: Anthropic is wired first because
  * api.anthropic.com accepts direct-from-page calls (the fetch backend adds
- * `anthropic-dangerous-direct-browser-access`). OpenAI-compatible endpoints
- * (incl. OpenRouter) come as their provider extensions land here.
+ * `anthropic-dangerous-direct-browser-access`). OpenAI and OpenRouter use
+ * Fen's shared Chat Completions adapter with provider-specific base URLs.
  */
 const isDevBuild = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
 
@@ -72,6 +94,24 @@ export const PROVIDERS: ProviderChoice[] = [
     browserDirect: true,
     models: MODEL_CATALOG.anthropic,
     note: "Direct browser access via anthropic-dangerous-direct-browser-access.",
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    envVar: "OPENAI_API_KEY",
+    browserDirect: true,
+    models: MODEL_CATALOG.openai,
+    note: "Browser-direct CORS preflight accepted by api.openai.com (probe 2026-08-07).",
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    envVar: "OPENROUTER_API_KEY",
+    browserDirect: true,
+    models: MODEL_CATALOG.openrouter,
+    note:
+      "Browser-direct CORS is supported by openrouter.ai; HTTP-Referer/X-Title " +
+      "headers are unavailable in pinned Fen v0.17 (fen#492).",
   },
   // Dev-server only: the auth bridge and /__codex-proxy exist only under
   // `vite dev`, so don't offer a dead-end provider in production builds.

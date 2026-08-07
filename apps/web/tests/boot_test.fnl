@@ -12,6 +12,10 @@
 (tset package.preload "fen.extensions.provider_anthropic.anthropic_messages"
       (fn [] {:name :anthropic
               :complete (fn [] nil)}))
+(tset package.preload "fen.extensions.provider_openai.openai_completions"
+      (fn [] {:api :openai-completions
+              :provider :openai
+              :complete (fn [] nil)}))
 (local boot (require :fen_web.web.boot))
 
 (fn tool-set []
@@ -28,7 +32,8 @@
     (after_each
       (fn []
         (register.unregister-by-owner "fen_web_tools")
-        (tset package.preload "fen.extensions.provider_anthropic.anthropic_messages" nil)))
+        (tset package.preload "fen.extensions.provider_anthropic.anthropic_messages" nil)
+        (tset package.preload "fen.extensions.provider_openai.openai_completions" nil)))
 
     (it "uses an explicit model and provider fallback in boot options"
       (fn []
@@ -38,7 +43,20 @@
         (assert.are.equal "claude-haiku-4-5"
                           (boot.model-for {:provider "anthropic"}))
         (assert.are.equal "gpt-5.6-luna"
-                          (boot.model-for {:provider "openai-codex"}))))
+                          (boot.model-for {:provider "openai-codex"}))
+        (assert.are.equal "gpt-5.4-nano"
+                          (boot.model-for {:provider "openai"}))
+        (assert.are.equal "anthropic/claude-haiku-4.5"
+                          (boot.model-for {:provider "openrouter"}))
+        (assert.is_true (boot.supported-provider? "openrouter"))
+        (let [spec (boot.provider-spec-for "openrouter")]
+          (assert.are.equal :openrouter spec.name)
+          (assert.are.equal :OPENROUTER_API_KEY spec.api-key-var)
+          (assert.are.equal "https://openrouter.ai/api/v1" spec.base-url)
+          (assert.are.equal :openai-completions spec.api)
+          ;; The provider-options compat seam is materialized in M.run; the
+          ;; registry spec still exposes only metadata and adapter behavior.
+          (assert.is_true (boot.supported-provider? "openai")))))
 
     (it "preserves the registered set and last register opts across reload"
       (fn []

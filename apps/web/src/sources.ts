@@ -110,8 +110,10 @@ function addFlatPackage(
 
 /**
  * Build the full `createFenRuntime` source map: fen core + util, the flat
- * Anthropic provider (+ shared streaming/retry helpers), the fen-web
- * platform tree, and the demo app tree.
+ * Anthropic and OpenAI provider trees (+ shared streaming/retry helpers),
+ * the fen-web platform tree, and the demo app tree. The OpenAI glob includes
+ * openai_completions (used by both the OpenAI and OpenRouter registry names)
+ * as well as the Codex modules required by dev mode.
  */
 export function buildDemoSources(): Map<string, FenSource> {
   const map = new Map<string, FenSource>();

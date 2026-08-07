@@ -37,6 +37,7 @@
 (local fs-kv (require :fen_web.shims.fs_kv))
 (local sessions-init (require :fen_web.sessions))
 (local anthropic (require :fen.extensions.provider_anthropic.anthropic_messages))
+(local openai-completions (require :fen.extensions.provider_openai.openai_completions))
 (local session-backend-registry
        (require :fen.core.extensions.register.session_backend))
 (local tool-registry (require :fen.core.extensions.register.tool))
@@ -77,9 +78,17 @@
       "missing. Use preview_console to see the app's console output and "
       "errors. Be concise."))
 
-(local SUPPORTED-PROVIDERS {:anthropic true :openai-codex true})
+;; Keep this VM validation set in sync with the selectable provider ids in
+;; apps/web/src/settings.ts (`PROVIDERS`). The TypeScript list controls the
+;; settings gate; this Fennel list controls which providers boot can wire.
+(local SUPPORTED-PROVIDERS {:anthropic true :openai true :openrouter true
+                             :openai-codex true})
 (local DEFAULT-ANTHROPIC-MODEL "claude-haiku-4-5")
+(local DEFAULT-OPENAI-MODEL "gpt-5.4-nano")
+(local DEFAULT-OPENROUTER-MODEL "anthropic/claude-haiku-4.5")
 (local DEFAULT-CODEX-MODEL "gpt-5.6-luna")
+(local OPENAI-BASE-URL "https://api.openai.com/v1")
+(local OPENROUTER-BASE-URL "https://openrouter.ai/api/v1")
 
 ;; Provider order per docs/apps/web.md: Anthropic first because
 ;; api.anthropic.com accepts direct-from-page calls (the fen-web fetch
@@ -94,6 +103,22 @@
     (set spec.name :anthropic)
     (set spec.default-model DEFAULT-ANTHROPIC-MODEL)
     (set spec.api-key-var :ANTHROPIC_API_KEY)
+    spec))
+
+;; OpenAI and OpenRouter share Fen's Chat Completions adapter. The adapter's
+;; provider metadata remains :openai because it describes the wire protocol;
+;; the registry name (and therefore the selectable provider) is distinct for
+;; OpenRouter. `base-url` is an existing provider-options seam in fen#492's
+;; vicinity; no extra-header seam exists in pinned v0.17 (see docs/apps/web.md).
+;; `spec.base-url` below is registry metadata; the `provider-options.base-url`
+;; passed in M.run is the behavioral endpoint used for the actual request.
+(fn openai-compatible-provider-spec [name default-model api-key-var base-url]
+  (let [spec {}]
+    (each [k v (pairs openai-completions)] (tset spec k v))
+    (set spec.name name)
+    (set spec.default-model default-model)
+    (set spec.api-key-var api-key-var)
+    (set spec.base-url base-url)
     spec))
 
 ;; ChatGPT/Codex subscription provider (dev-mode only in practice): OAuth
@@ -119,6 +144,33 @@
     (set spec.auth-backend :openai-codex)
     spec))
 
+(fn provider-spec-for [provider]
+  (case provider
+    "anthropic" (anthropic-provider-spec)
+    "openai" (openai-compatible-provider-spec
+                :openai DEFAULT-OPENAI-MODEL :OPENAI_API_KEY OPENAI-BASE-URL)
+    "openrouter" (openai-compatible-provider-spec
+                   :openrouter DEFAULT-OPENROUTER-MODEL :OPENROUTER_API_KEY
+                   OPENROUTER-BASE-URL)
+    "openai-codex" (codex-provider-spec)
+    _ nil))
+
+;; @doc fen_web.web.boot.supported-provider?
+;; kind: function
+;; signature: (supported-provider? provider) -> boolean
+;; summary: Return whether the web boot has a provider registration for the given provider id.
+;; tags: demo boot provider validation
+(fn M.supported-provider? [provider]
+  (. SUPPORTED-PROVIDERS (tostring provider)))
+
+;; @doc fen_web.web.boot.provider-spec-for
+;; kind: function
+;; signature: (provider-spec-for provider) -> table|nil
+;; summary: Build the provider registration spec for a selectable web provider, including its key variable and endpoint.
+;; tags: demo boot provider resolution
+(fn M.provider-spec-for [provider]
+  (provider-spec-for (tostring provider)))
+
 ;; @doc fen_web.web.boot.model-for
 ;; kind: function
 ;; signature: (model-for opts ?provider) -> string
@@ -128,9 +180,11 @@
   (let [opts (or opts {})
         provider (tostring (or ?provider opts.provider :anthropic))]
     (or (when (and opts.model (not= opts.model "")) opts.model)
-        (if (= provider "openai-codex")
-            DEFAULT-CODEX-MODEL
-            DEFAULT-ANTHROPIC-MODEL))))
+        (case provider
+          "openai" DEFAULT-OPENAI-MODEL
+          "openrouter" DEFAULT-OPENROUTER-MODEL
+          "openai-codex" DEFAULT-CODEX-MODEL
+          _ DEFAULT-ANTHROPIC-MODEL))))
 
 ;; @doc fen_web.web.boot.load-extension!
 ;; kind: function
@@ -267,10 +321,10 @@
 (fn M.run [opts]
   (let [opts (or opts {})
         provider (tostring (or opts.provider :anthropic))]
-    (when (not (. SUPPORTED-PROVIDERS provider))
+    (when (not (M.supported-provider? provider))
       (error (.. "fen_web.web.boot: unsupported provider '" provider
-                 "'; only 'anthropic' and 'openai-codex' are wired today "
-                 "(see docs/apps/web.md)")))
+                 "'; only 'anthropic', 'openai', 'openrouter', and "
+                 "'openai-codex' are wired today (see docs/apps/web.md)")))
     (let [kv (and _G.__fen_host _G.__fen_host.kv)
           ;; Settings/models use the runtime's storage/path preloads directly;
           ;; fs-kv remains for the direct Codex auth keychain and diagnostics.
@@ -284,7 +338,7 @@
           ;; Lua coroutine cannot await the IndexedDB transaction that gives
           ;; those guarantees.
           codex? (= provider "openai-codex")
-          spec (if codex? (codex-provider-spec) (anthropic-provider-spec))
+          spec (provider-spec-for provider)
           ;; Codex authenticates via the OAuth auth-backend (creds read from
           ;; the kv-seeded auth.json at request time), not an env-var key.
           api-key (if codex? nil (resolve-api-key spec))]
@@ -304,7 +358,14 @@
                                              :configured? codex-auth.configured?
                                              :get-fresh-creds! codex-auth.get-fresh-creds!})
                               (api.register :provider spec)))
+          (= provider "anthropic")
           (register-inline! :fen_web_provider_anthropic
+                            (fn [api] (api.register :provider spec)))
+          ;; OpenAI and OpenRouter are two registry names over the same
+          ;; Chat Completions implementation. OpenRouter's documented
+          ;; HTTP-Referer/X-Title headers cannot be added in v0.17 because
+          ;; this adapter has no extra-headers option (fen#492).
+          (register-inline! :fen_web_provider_openai
                             (fn [api] (api.register :provider spec))))
       ;; Web fetching is a deliberate capability: its registration is gated
       ;; by opts.enable-web-fetch and defaults false in the JS boot options.
@@ -326,13 +387,30 @@
                     (session-lifecycle.backend-info backend session) session)
             model (M.model-for opts provider)
             agent (agent-mod.make-agent
-                    {:provider-name (if codex? :openai-codex :anthropic)
+                    {:provider-name (if codex? :openai-codex
+                                        (if (= provider "openai") :openai
+                                            (if (= provider "openrouter")
+                                                :openrouter
+                                                :anthropic)))
                      :model model
                      :system (or opts.system DEFAULT-SYSTEM)
                      :api-key api-key
-                     ;; chatgpt.com/backend-api has no CORS headers; route
-                     ;; Codex through the Vite dev proxy (vite.config.ts).
-                     :provider-options (if codex? {:base-url "/__codex-proxy"} {})
+                     ;; ChatGPT's private backend has no CORS headers; route
+                     ;; Codex through the Vite dev proxy. Public OpenAI and
+                     ;; OpenRouter use their browser-direct HTTPS endpoints.
+                     ;; `provider-options.base-url` is the behavioral seam;
+                     ;; `spec.base-url` is only registry metadata. The compat
+                     ;; flag is required for the provider to request the final
+                     ;; streaming usage chunk used by the web status bar.
+                     :provider-options (if codex?
+                                          {:base-url "/__codex-proxy"}
+                                          (if (= provider "openai")
+                                              {:base-url OPENAI-BASE-URL
+                                               :compat {:supportsUsageInStreaming true}}
+                                              (if (= provider "openrouter")
+                                                  {:base-url OPENROUTER-BASE-URL
+                                                   :compat {:supportsUsageInStreaming true}}
+                                                  {})))
                      :max-tokens (or opts.max-tokens 8192)
                      :tools (tool-registry.merged [])
                      ;; The vfs is rooted at `/`; cwd remains session metadata
