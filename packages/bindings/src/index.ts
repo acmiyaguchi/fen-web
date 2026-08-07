@@ -59,3 +59,17 @@ export { WebHostPreview, serializePreviewRpcResult } from "./preview/webHostPrev
 export type { WebHostPreviewOptions } from "./preview/webHostPreview.js";
 export { FakePreview } from "./preview/fakePreview.js";
 export { wrapSrcdoc, PREVIEW_RESPONDER_SOURCE } from "./preview/responder.js";
+
+export {
+  browserNotificationPermission,
+  NOTIFY_MIN_INTERVAL_MS,
+  requestBrowserNotificationPermission,
+  WebHostNotify,
+} from "./notifications.js";
+export type {
+  BrowserNotificationResult,
+  HostNotify,
+  NotificationConstructor,
+  NotificationPermissionState,
+  WebHostNotifyOptions,
+} from "./notifications.js";

@@ -311,6 +311,17 @@ See also: [../architecture/fennel-first.md](../architecture/fennel-first.md)
 (`host.dom-apply` role), [extension.md](extension.md) for the other
 delivery shape.
 
+## Browser notifications
+
+The settings panel owns the optional browser notification permission. Its
+**Enable browser notifications** button calls `Notification.requestPermission()`
+only from that user gesture. The always-exposed `notify(title, body?)` tool
+never prompts: a granted permission sends the title/body through the host seam,
+while denied or unavailable permission creates an in-app transcript notice and
+returns a clean `permission not granted` error. The host rate-limits attempts
+to one every few seconds, and iOS Safari/non-PWA environments use the
+transcript fallback.
+
 ## Browser e2e
 
 The Chromium-only browser tier lives in `packages/e2e`. It builds the app and

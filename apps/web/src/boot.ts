@@ -9,6 +9,7 @@ import {
   serializePreviewConsoleEntries,
   serializePreviewRpcResult,
   type DomOp,
+  type HostNotify,
   type FetchPollResult,
   type FetchRequestOptions,
   type HostFetch,
@@ -63,6 +64,10 @@ export interface DemoRuntimeDeps {
   /** Sandboxed-iframe preview host: WebHostPreview in the browser, FakePreview
    * in tests. Drives the preview.* tools (fen-web#8). */
   preview: HostPreview;
+  /** Browser notification host. Permission is requested by the shell settings
+   * gesture, never by the notify tool. Optional for legacy test doubles; the
+   * host table returns the permission-gated fallback when omitted. */
+  notify?: HostNotify;
   /** HostFetch transport: WebHostFetch in the browser, ScriptedFetch in tests. */
   fetch: HostFetch;
   /** Vendored Fennel source (required in the browser; omit in node, which
@@ -201,6 +206,21 @@ export function buildDemoHostTable(
     // proxy userdata, which cjson cannot encode in the Fennel tool.
     preview_console_drain: () => serializePreviewConsoleEntries(deps.preview.drainConsole()),
     preview_console_uncaught_count: () => deps.preview.uncaughtConsoleErrors(),
+    // Keep notification outcomes as JSON text across the Wasmoon boundary.
+    // The Fennel tool turns fallback outcomes into an in-app transcript notice;
+    // this host seam never asks for permission.
+    notify: (title: unknown, body?: unknown) =>
+      JSON.stringify(
+        deps.notify?.notify(
+          String(title),
+          body === undefined || body === null ? undefined : String(body),
+        ) ?? {
+          ok: false,
+          status: "fallback",
+          fallback: true,
+          error: "permission not granted",
+        },
+      ),
     ...(deps.hostOverrides ?? {}),
   };
 }

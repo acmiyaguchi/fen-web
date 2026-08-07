@@ -28,7 +28,8 @@
    (require :fen_web.tools.ls)
    (require :fen_web.tools.delete)
    (require :fen_web.tools.move)
-   (pick-values 1 (require :fen_web.tools.tool_search))])
+   (pick-values 1 (require :fen_web.tools.tool_search))
+   (pick-values 1 (require :fen_web.tools.notify))])
 
 (local web-fetch-tool (pick-values 1 (require :fen_web.tools.web_fetch)))
 
@@ -37,7 +38,7 @@
 ;; @doc fen_web.tools.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the browser-native workspace tools plus registry-generic tool_search, with web_fetch opt-in through the web boot options.
+;; summary: Register the browser-native workspace tools, notify, and registry-generic tool_search, with web_fetch opt-in through the web boot options.
 ;; tags: fen-web tools register extension
 (fn M.register [api ?opts]
   (each [_ spec (ipairs tool-specs)]

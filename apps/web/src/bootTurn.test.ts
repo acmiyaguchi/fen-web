@@ -335,6 +335,38 @@ test("boot host exposes preview_console_drain as bounded JSON text", () => {
   assert.match(text, /buffered/);
 });
 
+test("boot host exposes notify outcomes as JSON text", () => {
+  const hostTable = buildDemoHostTable(
+    {
+      sources: new Map(),
+      fetchBackendSource: "",
+      kv: {},
+      dom: { apply: () => undefined },
+      preview: new FakePreview(),
+      notify: {
+        notify: (title, body) => ({
+          ok: true,
+          status: "sent",
+          fallback: false,
+          ...(body ? { error: `${title}:${body}` } : {}),
+        }),
+      },
+      fetch: new ScriptedFetch(),
+    },
+    new FetchPoller(new ScriptedFetch()),
+  );
+
+  const notify = hostTable.notify as (title: unknown, body?: unknown) => unknown;
+  const raw = notify("Finished", "Done");
+  assert.equal(typeof raw, "string");
+  assert.deepEqual(JSON.parse(raw as string), {
+    ok: true,
+    status: "sent",
+    fallback: false,
+    error: "Finished:Done",
+  });
+});
+
 test("bootDemo drives the demo presenter through one Anthropic turn end to end", async () => {
   const scripted = new ScriptedFetch();
   scripted.enqueue({

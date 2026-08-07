@@ -131,3 +131,11 @@ human-readable result, and an absent value remains absent. `WebHostPreview`,
 `FakePreview`, and the `apps/web/src/boot.ts` host seam all preserve this
 contract; the Fennel `rpc-result->tool` wrapper rejects any other value rather
 than passing proxy userdata to cjson.
+
+The notification seam follows the same one-way rule. `__fen_host.notify(title,
+body?)` returns a JSON-text result, never a JavaScript object. The host checks
+`Notification.permission` but does not call `requestPermission`; the shell
+settings panel owns that call and invokes it only from a user gesture. The
+host rate-limits attempts (currently one per three seconds). Permission
+denial, an absent API, or an unsupported browser returns a fallback result
+for the Fennel tool to surface as an in-app transcript notice.

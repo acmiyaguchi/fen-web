@@ -17,6 +17,7 @@
 (local move-tool (require :fen_web.tools.move))
 (local tool-search (require :fen_web.tools.tool_search))
 (local web-fetch-tool (require :fen_web.tools.web_fetch))
+(local notify-tool (require :fen_web.tools.notify))
 (local tools (require :fen_web.tools))
 (local preview (require :fen_web.web.preview))
 (local api-factory (require :fen.core.extensions.loader.api))
@@ -410,6 +411,43 @@
             (let [r (web-fetch-tool.execute {:url "https://example.test"} {} (fn []))]
               (assert.is_true r.is-error?))))))
 
+    (describe "notify"
+      (fn []
+        (it "sends a notification through the JSON-text host seam"
+          (fn []
+            (set _G.__fen_host
+                 {:notify (fn [title body]
+                            (assert.are.equal "Finished" title)
+                            (assert.are.equal "The turn is done." body)
+                            "{\"ok\":true,\"status\":\"sent\",\"fallback\":false}")})
+            (let [r (notify-tool.execute {:title "Finished"
+                                           :body "The turn is done."}
+                                          {})]
+              (assert.is_false r.is-error?)
+              (assert.are.equal "notification sent" (text-of r)))))
+
+        (it "returns the clean permission error and uses the fallback path"
+          (fn []
+            (set _G.__fen_host
+                 {:notify (fn [_ _]
+                            "{\"ok\":false,\"status\":\"fallback\",\"fallback\":true,\"error\":\"permission not granted\"}")})
+            (let [r (notify-tool.execute {:title "Needs input"} {})]
+              (assert.is_true r.is-error?)
+              (assert.are.equal "error: permission not granted" (text-of r)))))
+
+        (it "does not throw when the host notification seam is absent"
+          (fn []
+            (set _G.__fen_host {:kv kv})
+            (let [r (notify-tool.execute {:title "Unavailable"} {})]
+              (assert.is_true r.is-error?)
+              (assert.are.equal "error: permission not granted" (text-of r)))))
+
+        (it "requires a title"
+          (fn []
+            (let [r (notify-tool.execute {} {})]
+              (assert.is_true r.is-error?)
+              (assert.are.equal "error: missing 'title'" (text-of r)))))))
+
     (describe "ls"
       (fn []
         (it "lists immediate directory entries with bare names (no trailing / on dirs, matching fen's `ls -1`)"
@@ -430,14 +468,14 @@
 
     (describe "init registration"
       (fn []
-        (it "registers only the core workspace set and tool_search as :always"
+        (it "registers the core workspace set, tool_search, and notify as :always"
           (fn []
             (let [registered []
                   api {:register (fn [kind spec] (table.insert registered [kind spec]))}]
               (tools.register api)
-              (assert.are.equal 9 (length registered))
+              (assert.are.equal 10 (length registered))
               (let [names {}
-                    always-names [:read :write :edit :grep :find :ls :delete :move :tool_search]]
+                    always-names [:read :write :edit :grep :find :ls :delete :move :tool_search :notify]]
                 (each [_ [kind spec] (ipairs registered)]
                   (assert.are.equal :tool kind)
                   (assert.are.equal :always spec.exposure)
