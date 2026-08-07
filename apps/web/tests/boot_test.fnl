@@ -99,6 +99,91 @@
             (assert.are.equal "> remember this" (. rows 1 :text))
             (assert.are.equal "I remember" (. rows 2 :text))))))
 
+    (it "redacts agent-state values before they reach a truncation boundary"
+      (fn []
+        (let [secret "sk-ant-api03-test-secret-material"
+              surface (boot.redact-surface
+                        {:api-key secret
+                         :api-key-var "ANTHROPIC_API_KEY"
+                         :message (.. "prefix " secret " suffix")}
+                        [secret])]
+          (assert.are.equal "[redacted]" (. surface "api-key"))
+          (assert.are.equal "ANTHROPIC_API_KEY" (. surface "api-key-var"))
+          (assert.are.equal "prefix [redacted] suffix" surface.message))))
+
+    (it "unit-tests web agent-state redaction helpers"
+      (fn []
+        (let [secret "sk-ant-api03-test-secret-material"
+              short "oops"
+              kv {:list (fn [_] ["env/apikey/ANTHROPIC_API_KEY"
+                                 "env/apikey/SHORT"])
+                  :get (fn [key]
+                         (if (= key "env/apikey/ANTHROPIC_API_KEY") secret
+                             (= key "env/apikey/SHORT") short
+                             nil))}
+              secrets (boot.credential-secrets kv short)]
+          (assert.are.equal "before[redacted]after"
+                            (boot.replace-secret (.. "before" secret "after") secret))
+          (assert.are.equal "[redacted]"
+                            (boot.redact-string secret [secret]))
+          (assert.are.equal "[redacted]"
+                            (boot.redact-string
+                              "sk-ant-api03-test-secret-material" []))
+          (assert.is_nil (boot.redact-string nil [secret]))
+          (assert.is_true (boot.credential-field? "api-key"))
+          (assert.is_true (boot.credential-field? "authorization"))
+          (assert.is_false (boot.credential-field? "api-key-var"))
+          (assert.is_false (boot.credential-field? "model-var"))
+          (assert.is_true (boot.credential-field? "token"))
+          (assert.are.equal 1 (length secrets))
+          (assert.are.equal secret (. secrets 1)))))
+
+    (it "decorates agent-state registration with pre-truncation redaction"
+      (fn []
+        (let [secret "sk-ant-api03-test-secret-material"
+              captured {}
+              api {:models {:list (fn [_] [{:api-key secret
+                                             :api-key-var "ANTHROPIC_API_KEY"}])
+                            :inspect (fn [_ _] [])
+                            :dynamic-cache (fn [] {:secret secret})
+                            :resolve (fn [_ _]
+                                       {:status :ok
+                                        :model {:provider "fake"
+                                                :id "model"
+                                                :api-key secret}})
+                            :canonical-id (fn [_] (.. "fake/" secret))}
+                   :session {:info (fn [] {})
+                             :active-backend (fn [] {:name "kv"
+                                                     :secret secret})}
+                   :diagnostics {:list-errors (fn [] [])
+                                 :error-log-path (fn [] "/tmp/errors")}
+                   :introspect {:collect (fn [_ _] {})}
+                   :list (fn [_] [{:api-key secret}])
+                   :register (fn [_ spec] (set captured.spec spec))}
+              safe (boot.safe-agent-state-api api [secret])]
+          (safe.register :tool
+            {:name :agent_state
+             :execute (fn [args ctx _yield]
+                        (let [text (?. ctx :agent :messages 1 :content)]
+                          {:content [{:text (string.sub text 1 args.max_bytes)}]
+                           :is-error? false}))})
+          (let [result (captured.spec.execute
+                         {:query "(:get :messages)" :max_bytes 5}
+                         {:agent {:messages [{:role :user :content secret}]}}
+                         nil)]
+            (assert.is_false result.is-error?)
+            ;; The fake companion truncates inside execute. Seeing the
+            ;; replacement prefix proves the wrapper redacted the context
+            ;; before that cut, rather than merely replacing a full secret in
+            ;; the returned result.
+            (assert.are.equal "[reda" (. result.content 1 :text)))
+          (assert.are.equal "[redacted]"
+                            (. (safe.models.dynamic-cache) :secret))
+          (assert.are.equal "[redacted]"
+                            (. (safe.session.active-backend) :secret))
+          (assert.are.equal "fake/[redacted]"
+                            (safe.models.canonical-id {:provider "fake" :id secret})))))
+
     (it "uses an explicit model and provider fallback in boot options"
       (fn []
         (assert.are.equal "claude-sonnet-5"

@@ -54,15 +54,29 @@
 (local turn-lifecycle (require :fen.turn_lifecycle))
 (local session-lifecycle (require :fen.session_lifecycle))
 (local web-ingest (require :fen_web.web.ingest))
+(local redact (require :fen.util.redact))
+(local json (require :fen.util.json))
+(local log (require :fen.util.log))
 
 (local M {})
+
+;; wasmoon exposes io.popen but raises "popen not supported" when called.
+;; The agent_state companion's runtime snapshot asks fen.version to inspect
+;; the runtime, so install the unavailable-pipe fallback while boot loads — not
+;; only when the optional Codex provider is selected. A nil decorator means
+;; "reuse retained", just like ?register-opts in load-extension!; this
+;; unconditional preload keeps the companion safe for every provider.
+(when (= (type io) :table)
+  (tset io :popen (fn [_] nil)))
 
 ;; A reload caller often has no reason to know the extension's boot flags.
 ;; Retain the last explicit registration options per manifest so omitting
 ;; ?register-opts on reload does not silently disable an opt-in tool such as
-;; web_fetch. Store a shallow copy so a later caller mutation cannot rewrite
-;; the retained contract.
+;; web_fetch. Retain API decorators too: a safety wrapper installed for
+;; agent_state must survive the same reload path. Store shallow option copies
+;; so a later caller mutation cannot rewrite the retained contract.
 (local last-register-opts {})
+(local last-api-decorators {})
 
 (fn copy-table [source]
   (let [out {}]
@@ -131,12 +145,6 @@
 ;; the source map when the bundle includes it (sources.ts); node tests that
 ;; hand-build an anthropic-only map must still be able to load this module.
 (fn codex-provider-spec []
-  ;; wasmoon's io.popen exists but throws "'popen' not supported" when
-  ;; called (docs/architecture/seams.md, fen#481), and openai_codex_responses
-  ;; calls it at module load to detect a uname-based user agent. Replace it
-  ;; with a "pipe unavailable" stub (returns nil) so the module's own
-  ;; "pi (lua)" fallback applies instead of the throw aborting the boot.
-  (tset io :popen (fn [_] nil))
   (let [codex-responses (require :fen.extensions.provider_openai.openai_codex_responses)
         spec {}]
     (each [k v (pairs codex-responses)] (tset spec k v))
@@ -187,19 +195,235 @@
           "openai-codex" DEFAULT-CODEX-MODEL
           _ DEFAULT-ANTHROPIC-MODEL))))
 
+(fn replace-secret [text secret]
+  "Replace one exact secret without treating it as a Lua pattern."
+  (if (or (= secret nil) (= secret ""))
+      text
+      (let [parts []
+            n (length text)]
+        (var from 1)
+        (var done? false)
+        (while (not done?)
+          (let [(start end) (string.find text secret from true)]
+            (if start
+                (do
+                  (table.insert parts (string.sub text from (- start 1)))
+                  (table.insert parts "[redacted]")
+                  (set from (+ end 1)))
+                (do
+                  (table.insert parts (string.sub text from n))
+                  (set done? true)))))
+        (table.concat parts ""))))
+
+(fn redact-string [value secrets]
+  (if (= value nil)
+      nil
+      (let [;; fen.util.redact's historical `sk%-%w+` matcher stops at the
+            ;; hyphen in sk-ant-... keys. Scrub that provider shape first so
+            ;; the shared pass cannot leave a suffix behind.
+            initial (string.gsub (tostring value)
+                                 "sk%-ant%-[%w_-]+"
+                                 "[redacted]")]
+        (var out initial)
+        (set out (redact.scrub-string out))
+        (each [_ secret (ipairs (or secrets []))]
+          (when (= (type secret) :string)
+            (set out (replace-secret out secret))))
+        out)))
+
+(fn credential-field? [key]
+  (let [name (string.lower (tostring key))
+        contains? (fn [needle]
+                    (not= nil (string.find name needle 1 true)))]
+    ;; `api-key-var` and its cousins identify an environment variable name,
+    ;; not the credential value; keep that useful metadata visible.
+    (if (string.match name "[-_]var$")
+        false
+        (or (contains? "api-key")
+            (contains? "api_key")
+            (contains? "apikey")
+            (contains? "secret")
+            (contains? "password")
+            (contains? "credential")
+            (contains? "authorization")
+            (contains? "access-token")
+            (contains? "refresh-token")
+            (contains? "cookie")
+            (= name "access")
+            (= name "refresh")
+            (= name "access_token")
+            (= name "refresh_token")
+            (= name "token")
+            (= name "key")))))
+
+(fn redact-surface [value secrets ?depth ?seen]
+  "Copy a tool-facing value while removing credential fields and exact keys.
+   This is intentionally local to the web agent_state registration: the core
+   extension is shared with trusted desktop runtimes and must remain read-only
+   without a browser-specific secret channel."
+  (let [depth (or ?depth 0)
+        kind (type value)]
+    (if (> depth 8)
+        "[truncated]"
+        (= kind :string)
+        (redact-string value secrets)
+        (or (= kind :number) (= kind :boolean) (= kind :nil))
+        value
+        (= kind :table)
+        (let [seen (or ?seen {})]
+          (if (. seen value)
+              "[cycle]"
+              (do
+                (tset seen value true)
+                (let [out {}]
+                  (each [key child (pairs value)]
+                    (when (or (= (type key) :string)
+                              (= (type key) :number))
+                      (tset out key
+                            (if (credential-field? key)
+                                "[redacted]"
+                                (redact-surface child secrets (+ depth 1) seen)))))
+                  (tset seen value nil)
+                  out))))
+        (= kind :function) "[function]"
+        (redact-string value secrets))))
+
+(fn credential-secrets [kv api-key]
+  "Collect only credential values already present in the browser VM. This
+   keeps the exact-secret redaction list aligned with SettingsStore's
+   env/apikey namespace and the dev Codex auth record without crossing back
+   into JS."
+  (let [out []]
+    (fn add! [value]
+      ;; Very short values are too collision-prone for global replacement
+      ;; (for example, a typo'd key could erase ordinary prose).
+      (when (and (= (type value) :string) (>= (length value) 8))
+        (table.insert out value)))
+    (add! api-key)
+    (when (and kv (= (type kv.list) :function) (= (type kv.get) :function))
+      (each [_ key (ipairs (or (kv.list "env/apikey/") []))]
+        (add! (kv.get key)))
+      (let [raw (kv.get "//.config/fen/auth.json")]
+        (when raw
+          (let [(ok? auth) (pcall json.decode raw)]
+            (when ok?
+              (fn collect-credential [value ?field]
+                (if (= (type value) :table)
+                    (each [key child (pairs value)]
+                      (collect-credential child key))
+                    (when (and ?field (credential-field? ?field))
+                      (add! value))))
+              (collect-credential auth nil))))))
+    out))
+
+;; Export the web-only redaction seam so busted can exercise the exact
+;; transformations used by the browser decorator instead of relying only on
+;; an end-to-end provider request.
+(set M.replace-secret replace-secret)
+(set M.redact-string redact-string)
+(set M.credential-field? credential-field?)
+(set M.redact-surface redact-surface)
+(set M.credential-secrets credential-secrets)
+
+(fn safe-agent-state-api [api secrets]
+  "Give the shared agent_state extension a browser-safe API view. The
+   extension's normal provider/model registries contain implementation records
+   that are safe for trusted runtimes but may include an API key in a web VM."
+  (let [safe (copy-table api)
+        safe-models (copy-table api.models)
+        safe-session (copy-table api.session)
+        safe-diagnostics (copy-table api.diagnostics)
+        safe-introspect (copy-table api.introspect)]
+    (set safe.list (fn [kind]
+                     (redact-surface (api.list kind) secrets)))
+    (set safe.register
+         (fn [kind spec]
+           (if (and (= kind :tool)
+                    (or (= (tostring spec.name) "agent_state")
+                        (= (tostring spec.name) "models")))
+               (let [safe-spec (copy-table spec)
+                     execute spec.execute]
+                 (when (= (type execute) :function)
+                   (set safe-spec.execute
+                        (fn [args ctx ?yield-fn]
+                          ;; Redact the agent context before the companion
+                          ;; renders/truncates it. Post-result exact matching
+                          ;; remains a second guard, but cannot be the first
+                          ;; line of defense against max_bytes oracles.
+                          (let [safe-ctx (redact-surface ctx secrets)]
+                            (redact-surface
+                              (execute args safe-ctx ?yield-fn)
+                              secrets)))))
+                 (api.register kind safe-spec))
+               (api.register kind spec))))
+    (set safe-models.list
+         (fn [opts]
+           (redact-surface (api.models.list opts) secrets)))
+    (set safe-models.inspect
+         (fn [opts query]
+           (redact-surface (api.models.inspect opts query) secrets)))
+    ;; model-info in the companion calls these members directly rather than
+    ;; going through models.list/inspect, so keep those call sites inside the
+    ;; same pre-truncation redaction boundary too.
+    (when (= (type api.models.dynamic-cache) :function)
+      (set safe-models.dynamic-cache
+           (fn [] (redact-surface (api.models.dynamic-cache) secrets))))
+    (when (= (type api.models.resolve) :function)
+      (set safe-models.resolve
+           (fn [query available]
+             (redact-surface (api.models.resolve query available) secrets))))
+    (when (= (type api.models.canonical-id) :function)
+      (set safe-models.canonical-id
+           (fn [model-ref]
+             (redact-string (api.models.canonical-id model-ref) secrets))))
+    (set safe.models safe-models)
+    (set safe-session.info
+         (fn [] (redact-surface (api.session.info) secrets)))
+    (when (= (type api.session.active-backend) :function)
+      (set safe-session.active-backend
+           (fn [] (redact-surface (api.session.active-backend) secrets))))
+    (set safe.session safe-session)
+    (set safe-diagnostics.list-errors
+         (fn [] (redact-surface (api.diagnostics.list-errors) secrets)))
+    (set safe-diagnostics.error-log-path
+         (fn [] (redact-string (api.diagnostics.error-log-path) secrets)))
+    (set safe.diagnostics safe-diagnostics)
+    (set safe-introspect.collect
+         (fn [?owner ?ctx]
+           (redact-surface (api.introspect.collect ?owner ?ctx) secrets)))
+    (set safe.introspect safe-introspect)
+    ;; agent_state requires fen.util.log directly, bypassing the extension API.
+    ;; Replace only the shared module's read method, retaining its original
+    ;; cursor semantics and ensuring log records are scrubbed before the
+    ;; companion's max_bytes truncation. Keep one raw function so reloads do
+    ;; not build an unbounded wrapper chain.
+    (let [raw (or (. log "__fen_web_raw_list_recent") log.list-recent)]
+      (tset log "__fen_web_raw_list_recent" raw)
+      (tset log :list-recent
+            (fn [?after-seq]
+              (let [(records truncated?) (raw ?after-seq)]
+                (values (redact-surface records secrets) truncated?)))))
+    safe))
+
+(set M.safe-agent-state-api safe-agent-state-api)
+
 ;; @doc fen_web.web.boot.load-extension!
 ;; kind: function
-;; signature: (load-extension! manifest-module ?reload? ?register-opts) -> {:owner :manifest :reload-modules :reload-exclude}
-;; summary: In-page analog of fen.core.extensions.loader's module-spec load, built from the loader's own PUBLIC pieces (api factory, manifest reader, owner-scoped registry) so the manifest/reload/owner contract is real without the CLI loader (whose compiler dep pulls fen.runtime, absent in-VM). Reads :entry-module/:reload-modules/:reload-exclude, drops prior owner contributions first, clears the right package.loaded entries, then requires the entry and calls its register fn with a privileged owner-scoped api and retained boot options.
+;; signature: (load-extension! manifest-module ?reload? ?register-opts ?api-decorator) -> {:owner :manifest :reload-modules :reload-exclude}
+;; summary: In-page analog of fen.core.extensions.loader's module-spec load, built from the loader's own PUBLIC pieces (api factory, manifest reader, owner-scoped registry) so the manifest/reload/owner contract is real without the CLI loader (whose compiler dep pulls fen.runtime, absent in-VM). Reads :entry-module/:reload-modules/:reload-exclude, drops prior owner contributions first, clears the right package.loaded entries, then requires the entry and calls its register fn with a privileged owner-scoped api and retained boot options. An optional API decorator is used for the web agent_state registration so secrets are redacted before the shared extension sees registry data.
 ;; tags: demo boot extensions loader manifest reload
-(fn M.load-extension! [manifest-module ?reload? ?register-opts]
+(fn M.load-extension! [manifest-module ?reload? ?register-opts ?api-decorator]
   (let [manifest (require manifest-module)
         owner (tostring (or (?. manifest :name) manifest-module))
         entry-module (manifest-mod.entry-module-of manifest)
         register-opts (if (= ?register-opts nil)
                           (or (. last-register-opts manifest-module) {})
-                          ?register-opts)]
+                          ?register-opts)
+        api-decorator (if (= ?api-decorator nil)
+                          (. last-api-decorators manifest-module)
+                          ?api-decorator)]
     (tset last-register-opts manifest-module (copy-table register-opts))
+    (tset last-api-decorators manifest-module api-decorator)
     (when (not entry-module)
       (error (.. "fen_web.web.boot: manifest " (tostring manifest-module)
                  " has no :entry-module")))
@@ -222,7 +446,10 @@
             (tset package.loaded entry-module nil)))
       (let [entry (require entry-module)
             register-fn (manifest-mod.entry-register entry)
-            api (api-factory.make-api owner manifest {:privileged? true})]
+            raw-api (api-factory.make-api owner manifest {:privileged? true})
+            api (if (= (type api-decorator) :function)
+                    (api-decorator raw-api)
+                    raw-api)]
         (when (= (type register-fn) :function)
           (register-fn api register-opts))
         {:owner owner :manifest manifest
@@ -563,6 +790,14 @@
             loaded-messages opened.messages
             _info (session-backend-registry.set-info!
                     (session-lifecycle.backend-info backend session) session)
+            ;; Load the companion after the active session handle is installed.
+            ;; This keeps any future companion-owned state restore on the same
+            ;; per-session KV handle used by the normal flush bridge.
+            _agent-state
+              (M.load-extension! :fen.extensions.agent_state.manifest false nil
+                                  (fn [api]
+                                    (safe-agent-state-api
+                                      api (credential-secrets kv api-key))))
             model (M.model-for opts provider)
             make-agent (fn []
                          (agent-mod.make-agent

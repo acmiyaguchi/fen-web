@@ -271,6 +271,29 @@ its fetch poller aborts all remaining transports before closing the runtime.
   entry renders through both `build-page` and `preview_refresh`), and the
   end-to-end seed assertion in `apps/web/src/bootTurn.test.ts`.
 
+**#87 - agent-state companion (implemented).** Web boot loads fen's
+`fen.extensions.agent_state` manifest and its required status/steering
+behavior modules into the browser source map. The companion remains a
+read-only tool: it can inspect the live agent, provider/model readiness,
+extension registry, diagnostics, and the active session, but it cannot
+evaluate code or mutate runtime state. The web registration supplies a
+browser-only API decorator that removes provider credential fields and exact
+stored API-key values from registry, diagnostics, introspection, and
+tool-result data. In particular, the `env/apikey/<VAR>` value used by
+`path.getenv` is never exposed as an environment tree or provider config;
+the browser diagnostics `addSecret` list continues to scrub the same value
+from reports and bus/fetch summaries.
+
+**Persistence scope decision:** the GOAL.md request to persist companion state
+is explicitly scoped out of #87. The read-only agent-state companion owns no
+mutable durable payload, so this web integration does not add extension-state
+writes, restore hooks, or a global browser state store. Its `:session` view
+reports the current session identity, while the existing session lifecycle
+continues to persist ordinary conversation messages. This is a deliberate
+read-only-companion boundary, not an implementation of per-session or global
+agent-state persistence; any future stateful companion must choose and test
+its own persistence scope.
+
 - **#41 — workspace visibility (implemented).** The shell-owned panel in
   `src/workspacePanel.ts` reads the durable `fs:` keyspace directly through a
   separate `IndexedDbKv` connection. It displays implicit directories and
