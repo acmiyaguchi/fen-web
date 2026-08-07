@@ -157,7 +157,17 @@ export function buildDemoHostTable(
           // A diagnostics failure must not poison an in-flight request.
         }
       }
-      return result;
+      // Response headers must cross the boundary as JSON TEXT, never as the
+      // JS object: wasmoon marshals objects as js_proxy userdata and pairs()
+      // on a proxy throws — the #65 crash. The raw `headers` field is
+      // removed entirely so no proxy can reach Lua; fetch.fnl decodes
+      // headers-json (kebab key per the host-key convention; see
+      // docs/bindings/host-protocol.md).
+      const { headers, ...rest } = result;
+      return {
+        ...rest,
+        ...(headers ? { "headers-json": JSON.stringify(headers) } : {}),
+      };
     },
     fetch_dispose: (id: number) => poller.dispose(id),
     // host.preview: setHtml (preview_refresh) + the async postMessage RPC

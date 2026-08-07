@@ -23,7 +23,7 @@ is start/poll:
       (if poll.done
           (do
             (set result (if poll.error {:error poll.error}
-                            {:status poll.status :headers poll.headers :body poll.body}))
+                            {:status poll.status :headers-json poll.headers-json :body poll.body}))
             (__fen_host.fetch_dispose id))
           (opts.yield))))
   result)
@@ -39,7 +39,16 @@ Fennel loop calls `opts.yield` (`coroutine.yield`) so the VM cooperates
 instead of busy-looping a single Lua call — the backend requires
 `opts.yield` and errors if it's absent (no blocking-mode fallback; see
 [fetch.md](fetch.md)). `fetch_dispose` is called on every terminal branch,
-not optionally. JS resumes nothing; Lua always drives. Source:
+not optionally. JS resumes nothing; Lua always drives.
+
+`fetch_poll` terminal results carry response headers as `headers-json`,
+host-owned JSON text serialized by the JS host. This is the same hard
+never-let-a-JS-proxy-reach-Lua invariant as `preview_console_drain` (see
+[preview.md](preview.md)): wasmoon exposes nested JS objects as proxy userdata,
+and `pairs()` on that userdata throws—the mechanism behind issue #65. The
+Fennel fetch backend decodes `headers-json` before retry code or tools inspect
+it. Pure-Fennel hosts may continue to provide a native `headers` table for
+backward compatibility. Source:
 `packages/bindings/src/fetch/pollProtocol.ts`,
 `packages/bindings/fnl/fen/util/http/backends/fetch.fnl`.
 

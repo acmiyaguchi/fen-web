@@ -13,6 +13,7 @@
 
 (local util (require :fen_web.tools.util))
 (local truncate (require :fen_web.tools.truncate))
+(local json (require :fen.util.json))
 
 (local DEFAULT-TIMEOUT-MS 600000)
 (local DEFAULT-CONNECT-TIMEOUT-MS 30000)
@@ -26,6 +27,19 @@
        (= (type h.fetch_poll) :function)
        (= (type h.fetch_dispose) :function)))
 
+(fn response-headers [poll]
+  ;; fetch_poll response headers cross the wasmoon boundary as JSON text:
+  ;; JS objects are proxy userdata, and pairs() on that userdata throws.
+  ;; Keep native `headers` tables for pure-Fennel hosts, but never pass a
+  ;; browser proxy through to the header formatter.
+  (let [raw poll.headers-json]
+    (if raw
+        (let [(ok? headers) (pcall json.decode raw)]
+          (if (and ok? (= (type headers) :table)) headers {}))
+        (= (type poll.headers) :table)
+        poll.headers
+        {})))
+
 (fn sorted-header-lines [headers]
   (let [entries []]
     (each [k v (pairs (or headers {}))]
@@ -36,7 +50,7 @@
 
 (fn response-text [poll max-lines max-bytes ?yield-fn]
   (let [status (tostring (or poll.status 0))
-        headers (sorted-header-lines poll.headers)
+        headers (sorted-header-lines (response-headers poll))
         header-text (if (> (length headers) 0)
                         (table.concat headers "\n")
                         "")
