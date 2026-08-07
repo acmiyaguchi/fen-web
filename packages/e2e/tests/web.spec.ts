@@ -86,6 +86,41 @@ test("executes ordered Anthropic tool_use turns, persists the file, and refreshe
   await router.assertComplete();
 });
 
+test("drives the seeded starter todo through the real preview iframe", async ({ page }) => {
+  // The browser boot seeds apps/web/starter into IndexedDB before the VM
+  // starts. The scripted turn uses preview_refresh to render that entry; use
+  // frameLocator for the runtime interaction so this scenario remains a
+  // direct assertion of the real sandboxed document and starter app.js.
+  const router = new ScriptedAnthropicRouter(page, "preview-starter.json");
+  await router.install();
+  await startWithFakeKey(page);
+
+  await submitPrompt(page, "Drive the seeded starter todo app in the live preview.");
+  await expectTranscript(page, "The seeded starter preview is ready for live iframe interaction.");
+
+  const frame = page.frameLocator("#fen-preview-frame");
+  await expect(page.locator("#fen-preview-frame")).toHaveAttribute("sandbox", "allow-scripts");
+  await expect(frame.locator("#new-todo")).toBeVisible();
+  await frame.locator("#new-todo").fill("Ship the iframe todo");
+  // The iframe deliberately has sandbox="allow-scripts" only, so native
+  // form submission is blocked by the sandbox's missing allow-forms token.
+  // Dispatch the existing submit handler directly after a real frame fill;
+  // this keeps the starter app unchanged while exercising its add path.
+  await frame.locator("#new-todo-form").evaluate((form) =>
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
+  await expect(frame.locator("#todo-list li")).toHaveCount(1);
+  await expect(frame.locator("#todo-list li .todo-text")).toHaveText("Ship the iframe todo");
+
+  await frame.locator('#todo-list input[type="checkbox"]').check();
+  await expect(frame.locator("#todo-list li")).toHaveClass(/done/);
+  await expect(frame.locator('#todo-list input[type="checkbox"]')).toBeChecked();
+  await expect(frame.locator("#remaining-count")).toHaveText("0");
+  await expect(frame.locator("#empty-state")).toHaveClass(/hidden/);
+
+  await router.assertComplete();
+});
+
 test("shows fatal panel, restarts a fresh session, and preserves pre-crash workspace data", async ({
   page,
 }) => {

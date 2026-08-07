@@ -1,0 +1,13 @@
+{
+  "name": "drive the seeded starter todo app in the live preview",
+  "turns": [
+    {
+      "request": { "userText": "Drive the seeded starter todo app in the live preview." },
+      "response": { "fixture": "preview-starter-refresh.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-starter-refresh-1" },
+      "response": { "fixture": "preview-starter-final.sse", "contentType": "text/event-stream" }
+    }
+  ]
+}
