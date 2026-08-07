@@ -20,6 +20,18 @@
 /** The RPC verbs the preview responder understands, one per preview.* tool. */
 export type PreviewRpcMethod = "query" | "click" | "fill" | "eval" | "screenshot";
 
+export type PreviewConsoleLevel = "log" | "warn" | "error" | "info" | "debug";
+
+/** One bounded, already-stringified entry from the preview iframe. */
+export interface PreviewConsoleEntry {
+  level: PreviewConsoleLevel;
+  args: string[];
+  /** Present for Error objects and uncaught errors/rejections. */
+  stack?: string;
+  /** True for window.onerror and unhandledrejection entries. */
+  uncaught?: boolean;
+}
+
 /** A single RPC request posted into the preview iframe. Only the fields a
  * given method needs are populated; none ever carry secrets. */
 export interface PreviewRpcRequest {
@@ -52,9 +64,10 @@ export interface PreviewPollResult {
 
 /** The host.preview primitive. `setHtml` re-renders the preview document
  * (preview.refresh); the rpc* trio is the async postMessage bridge the
- * preview.query/click/fill/eval/screenshot tools drive. */
+ * preview.query/click/fill/eval/screenshot tools drive; `preview_console`
+ * drains the host-side console ring. */
 export interface HostPreview {
-  /** Render `html` into the sandboxed iframe (creating it on first use). */
+  /** Render `html` into the sandboxed iframe (creating the iframe on first use). */
   setHtml(html: string): void;
   /** Begin an RPC; returns an id to pass to rpcPoll/rpcDispose. Non-blocking. */
   rpcStart(req: PreviewRpcRequest): number;
@@ -63,6 +76,12 @@ export interface HostPreview {
   /** Drop terminal state for a completed RPC (mandatory cleanup, like
    * FetchPoller.dispose). */
   rpcDispose(id: number): void;
+  /** Drain entries not returned by an earlier drain or reset by setHtml. */
+  drainConsole(): PreviewConsoleEntry[];
+  /** Count unread uncaught errors without draining them. */
+  uncaughtConsoleErrors(): number;
+  /** Return the bounded recent tail without changing drain state. */
+  previewConsoleTail(): readonly PreviewConsoleEntry[];
   /** Release the iframe and window listener owned by this boot. */
   dispose(): void;
 }

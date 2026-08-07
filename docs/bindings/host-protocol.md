@@ -11,7 +11,7 @@ wasmoon runs the agent inside a Lua coroutine. Lua 5.4 cannot yield across
 a C-call boundary: a JS callback invoked from inside a pending
 `host.fetch` promise that tried to resume the coroutine would attempt
 exactly that. So the JS side never calls back into Lua. Instead, for
-operations that can be long-running (currently just fetch), the pattern
+operations that can be long-running (fetch and preview RPCs), the pattern
 is start/poll:
 
 ```fennel
@@ -83,3 +83,13 @@ JS/Lua boundary goes through this conversion — never `TextDecoder`/UTF-8.
 
 See also: [fetch.md](fetch.md), [kv.md](kv.md),
 [../architecture/seams.md](../architecture/seams.md).
+
+The same rule applies to the preview console: the iframe harness posts
+records to JS, the host buffers them, and Lua reads them synchronously with
+`preview_console_drain` when the tool is called. **Its return value is JSON
+text, never a JS aggregate/array.** This is a hard wasmoon boundary invariant:
+JS arrays cross into Lua as proxy userdata and must not be handed to cjson. The
+serialized text is capped at 65,536 characters, keeps newest entries, and ends
+with a synthetic warning carrying the count of omitted older entries when the
+cap is reached (the ring and per-entry bounds are documented in
+[preview.md](preview.md)). JS never invokes Lua from a `message` listener.

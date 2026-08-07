@@ -41,11 +41,20 @@ export type { FakeNode } from "./dom/fakeDom.js";
 
 export type {
   HostPreview,
+  PreviewConsoleEntry,
+  PreviewConsoleLevel,
   PreviewRpcMethod,
   PreviewRpcRequest,
   PreviewRpcResult,
   PreviewPollResult,
 } from "./preview/types.js";
+export {
+  PREVIEW_CONSOLE_MAX_AGGREGATE_TEXT,
+  PREVIEW_CONSOLE_MAX_ARGS,
+  PREVIEW_CONSOLE_MAX_ENTRIES,
+  PREVIEW_CONSOLE_MAX_TEXT,
+  serializePreviewConsoleEntries,
+} from "./preview/console.js";
 export { WebHostPreview } from "./preview/webHostPreview.js";
 export type { WebHostPreviewOptions } from "./preview/webHostPreview.js";
 export { FakePreview } from "./preview/fakePreview.js";

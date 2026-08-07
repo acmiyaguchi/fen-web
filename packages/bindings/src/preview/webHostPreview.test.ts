@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 import { WebHostPreview } from "./webHostPreview.js";
 import { wrapSrcdoc, PREVIEW_RESPONDER_SOURCE } from "./responder.js";
 import { FakePreview } from "./fakePreview.js";
+import {
+  PREVIEW_CONSOLE_MAX_AGGREGATE_TEXT,
+  serializePreviewConsoleEntries,
+} from "./console.js";
 
 // A hand-rolled fake document/window/iframe (no jsdom in this repo). It records
 // the iframe attributes set, exposes the registered message listener so a test
@@ -75,7 +79,7 @@ function makeFakeDom() {
 test("setHtml creates an allow-scripts iframe with NO allow-same-origin", () => {
   const dom = makeFakeDom();
   const preview = new WebHostPreview({ document: dom.document, window: dom.window });
-  preview.setHtml("<h1>hi</h1>");
+  preview.setHtml("<h1>hi</h1><script>var GENERATION = __FEN_PREVIEW_GENERATION__;</script>");
 
   assert.equal(dom.attrs.sandbox, "allow-scripts", "sandbox must be exactly allow-scripts");
   assert.ok(
@@ -87,12 +91,109 @@ test("setHtml creates an allow-scripts iframe with NO allow-same-origin", () => 
     dom.attrs.srcdoc.includes("__fenPreview"),
     "srcdoc should inject the RPC responder",
   );
+  assert.ok(dom.attrs.srcdoc.includes("var GENERATION = 1;"));
+  preview.setHtml("<h1>fresh</h1><script>var GENERATION = __FEN_PREVIEW_GENERATION__;</script>");
+  assert.ok(dom.attrs.srcdoc.includes("var GENERATION = 2;"));
 });
 
 test("wrapSrcdoc appends the responder after the page body", () => {
-  const doc = wrapSrcdoc("<body>app</body>");
-  assert.ok(doc.startsWith("<body>app</body>"), "page HTML comes first");
+  const doc = wrapSrcdoc("<body>app __FEN_PREVIEW_GENERATION__</body>", 7);
+  assert.ok(doc.startsWith("<body>app 7</body>"), "page HTML comes first");
   assert.ok(doc.includes(PREVIEW_RESPONDER_SOURCE), "responder source is injected");
+});
+
+test("console messages are source-validated, bounded, and drain since the last check", () => {
+  const dom = makeFakeDom();
+  const preview = new WebHostPreview({
+    document: dom.document,
+    window: dom.window,
+    consoleLimit: 2,
+  });
+  preview.setHtml("<div></div>");
+
+  dom.dispatchMessage({
+    data: { __fenPreview: true, type: "console", entry: { level: "log", args: ["one"] } },
+    source: { foreign: true },
+  });
+  assert.deepEqual(preview.drainConsole(), [], "foreign console messages must be ignored");
+
+  dom.dispatchMessage({
+    data: { __fenPreview: true, type: "console", entry: { level: "log", args: ["one"], generation: 1 } },
+    source: dom.contentWindow,
+  });
+  dom.dispatchMessage({
+    data: {
+      __fenPreview: true,
+      type: "console",
+      entry: {
+        level: "error",
+        args: ["boom"],
+        stack: "Error: boom\\n at app.js:1",
+        uncaught: true,
+        generation: 1,
+      },
+    },
+    source: dom.contentWindow,
+  });
+  dom.dispatchMessage({
+    data: { __fenPreview: true, type: "console", entry: { level: "warn", args: ["old"], generation: 1 } },
+    source: dom.contentWindow,
+  });
+  assert.equal(preview.uncaughtConsoleErrors(), 1);
+  assert.deepEqual(preview.drainConsole(), [
+    { level: "error", args: ["boom"], stack: "Error: boom\\n at app.js:1", uncaught: true },
+    { level: "warn", args: ["old"] },
+  ], "the bounded ring keeps the newest entries");
+  assert.equal(preview.uncaughtConsoleErrors(), 0);
+  assert.deepEqual(preview.drainConsole(), []);
+
+  dom.dispatchMessage({
+    data: { __fenPreview: true, type: "console", entry: { level: "error", args: ["after"], generation: 1 } },
+    source: dom.contentWindow,
+  });
+  preview.setHtml("<div>new document</div>");
+  dom.dispatchMessage({
+    data: {
+      __fenPreview: true,
+      type: "console",
+      entry: { level: "error", args: ["stale"], generation: 1 },
+    },
+    source: dom.contentWindow,
+  });
+  dom.dispatchMessage({
+    data: {
+      __fenPreview: true,
+      type: "console",
+      entry: { level: "log", args: ["fresh"], generation: 2 },
+    },
+    source: dom.contentWindow,
+  });
+  assert.deepEqual(preview.drainConsole(), [{ level: "log", args: ["fresh"] }]);
+
+  dom.dispatchMessage({
+    data: {
+      __fenPreview: true,
+      id: 999,
+      result: { ok: true, value: "rpc" },
+      console: 1,
+    },
+    source: dom.contentWindow,
+  });
+  // A legacy-looking `console` field must not swallow a normal RPC reply.
+  const rpcId = preview.rpcStart({ method: "eval", expr: "1+1" });
+  dom.dispatchMessage({
+    data: {
+      __fenPreview: true,
+      id: rpcId,
+      result: { ok: true, value: "not swallowed" },
+      console: 1,
+    },
+    source: dom.contentWindow,
+  });
+  assert.deepEqual(preview.rpcPoll(rpcId), {
+    done: true,
+    result: { ok: true, value: "not swallowed" },
+  });
 });
 
 test("an RPC completes when the matching iframe window replies", () => {
@@ -166,6 +267,65 @@ test("dispose removes the iframe/listener and permits a clean fresh iframe", () 
 
   preview.setHtml("<div>new</div>");
   assert.equal(dom.appended.length, 2, "a fresh boot should append one replacement iframe");
+});
+
+test("unknown console levels normalize to log", () => {
+  const fake = new FakePreview();
+  fake.recordConsole({ level: "fatal", args: ["odd level"] });
+  assert.deepEqual(fake.drainConsole(), [{ level: "log", args: ["odd level"] }]);
+});
+
+test("preview-console aggregate is capped and reports omitted older entries", () => {
+  const entries = Array.from({ length: 200 }, (_, i) => ({
+    level: "error",
+    args: Array.from({ length: 20 }, () => `${String(i).padStart(3, "0")}-${"x".repeat(796)}`),
+    stack: "Error: " + "s".repeat(3190),
+  }));
+  const text = serializePreviewConsoleEntries(entries);
+  assert.ok(text.length <= PREVIEW_CONSOLE_MAX_AGGREGATE_TEXT);
+  const parsed = JSON.parse(text) as Array<{ args: string[] }>;
+  assert.ok(parsed.length < entries.length, "the aggregate should omit older entries");
+  // The buggy first-fit-from-newest loop kept exactly 1 entry + marker.
+  // Correct packing at ~19KB/entry keeps several and uses most of the
+  // budget — assert both, without over-fitting an exact count.
+  assert.ok(
+    parsed.length > 2,
+    `entries that fit must be retained, not discarded (kept ${parsed.length})`,
+  );
+  assert.ok(
+    text.length > PREVIEW_CONSOLE_MAX_AGGREGATE_TEXT / 2,
+    `the cap budget should be mostly used, not abandoned (used ${text.length})`,
+  );
+  assert.match(parsed.at(-1)?.args[0] ?? "", /omitted/);
+  assert.match(JSON.stringify(parsed), /199-/i, "newest entries should win");
+});
+
+test("small drains round-trip every entry with no omission marker", () => {
+  const entries = [
+    { level: "log", args: ["one"] },
+    { level: "warn", args: ["two"] },
+    { level: "error", args: ["three"] },
+  ];
+  const text = serializePreviewConsoleEntries(entries);
+  const parsed = JSON.parse(text) as Array<{ args: string[] }>;
+  assert.equal(parsed.length, 3, "everything fits, everything stays");
+  assert.ok(!text.includes("omitted"), "no false cap marker on a tiny payload");
+});
+
+test("FakePreview has the same console drain and uncaught-error surface", () => {
+  const fake = new FakePreview(() => ({ ok: true }), { consoleLimit: 2 });
+  fake.setHtml("<p>page</p>");
+  fake.recordConsole({ level: "info", args: ["hello"] });
+  fake.recordConsole({ level: "error", args: ["bad"], stack: "Error: bad", uncaught: true });
+  assert.equal(fake.uncaughtConsoleErrors(), 1);
+  assert.deepEqual(fake.drainConsole(), [
+    { level: "info", args: ["hello"] },
+    { level: "error", args: ["bad"], stack: "Error: bad", uncaught: true },
+  ]);
+  assert.equal(fake.uncaughtConsoleErrors(), 0);
+  fake.recordConsole({ level: "log", args: ["stale"] });
+  fake.setHtml("<p>fresh</p>");
+  assert.deepEqual(fake.drainConsole(), []);
 });
 
 test("FakePreview records HTML + requests and resolves synchronously", () => {

@@ -40,7 +40,7 @@ asserts the page assembler never emits the stored API key.
 
 ## Op surface
 
-`host.preview` hangs four functions off `__fen_host`
+`host.preview` hangs the following functions off `__fen_host`
 ([host-protocol.md](host-protocol.md)):
 
 | host fn | role |
@@ -49,6 +49,8 @@ asserts the page assembler never emits the stored API key.
 | `preview_rpc_start(req)` | begin one RPC (`{method, selector?, value?, expr?}`); returns a numeric id, non-blocking |
 | `preview_rpc_poll(id)` | `{done, result?}` — `result` is `{ok, value?, error?}` once the iframe replies |
 | `preview_rpc_dispose(id)` | drop terminal state for a completed RPC (mandatory cleanup) |
+| `preview_console_drain()` | synchronously drain iframe console/error entries since the last drain or `preview_set_html` |
+| `preview_console_uncaught_count()` | count unread uncaught errors without draining (used for terse auto-surfacing markers) |
 
 The RPC is asynchronous (a round trip to another context), so — like
 `host.fetch` — the Fennel side starts, polls, and yields the turn coroutine
@@ -82,18 +84,52 @@ tool returns a structured tool error instead of yielding forever.
 
 Registered demo-only through the per-owner manifest loader
 (`fen_web.web.boot.load-extension!` on `fen_web.web.preview.manifest`),
-via the ordinary public `:tool` register kind — the same path the file tools
-use, not an ad-hoc registration. All six use `:always` exposure so the agent
-can drive its app without a `tool_search` gate.
+via the ordinary public `:tool` register kind — the same path as the file tools.
+All seven use `:always` exposure so the agent can drive its app without a
+`tool_search` gate.
 
 | tool | effect |
 |---|---|
 | `preview_refresh` | assemble the vfs tree into one document and `set-html` it into the iframe |
 | `preview_query` | `document.querySelectorAll(selector)` → `{count, found, html, text, value}` |
-| `preview_click` | click the first match |
-| `preview_fill` | set an input's value + dispatch input/change |
-| `preview_eval` | evaluate a JS expression in the iframe, return the JSON-serialized result |
+| `preview_click` | click the first match; appends an uncaught-error marker when one is buffered |
+| `preview_fill` | set an input's value + dispatch input/change; appends an uncaught-error marker when one is buffered |
+| `preview_eval` | evaluate a JS expression in the iframe; appends an uncaught-error marker when one is buffered |
 | `preview_screenshot` | a `<canvas>` → `toDataURL()` PNG data URL |
+| `preview_console` | drain new console/error entries, including `level`, bounded string `args`, and error `stack` |
+
+`preview_console` drains only entries since the previous `preview_console` call
+(or the most recent `preview_refresh`). Refresh starts a fresh iframe document
+and clears the unread cursor. The host retains at most 200 entries;
+each entry has at most 20 arguments, each argument is capped at 800 characters,
+and an error stack is capped at 3,200 characters. Before crossing into Lua, the
+host serializes the drain as JSON text capped at 65,536 characters, retaining
+newest entries and appending a final synthetic warning with the omitted count
+when older entries do not fit. The host retains a bounded recent tail separately
+for diagnostics bundles (the bundle includes at most the last 25 entries), so
+reading the tool does not erase the **Preview console (tail)** diagnostics
+section.
+
+The click/fill/eval marker is a best-effort peek taken around the RPC reply.
+Its absence must **not** be interpreted as proof that the preview had no errors:
+an error can be posted after the reply is handled. Use `preview_console` for the
+authoritative, consuming answer.
+
+## The iframe harness
+
+`fen_web.web.preview.html.build-page` inserts a dependency-free harness into
+every assembled document — including the missing-entry placeholder — after the
+existing doctype and charset metadata when present, but before the first app
+script. It wraps `console.log`, `warn`, `error`, `info`, and `debug`, plus
+`window.onerror` and `unhandledrejection`. Arguments are defensively
+stringified (circular values and DOM nodes are safe), capped per entry, and
+posted to the parent as bounded entries. The host-side aggregate returned by
+`preview_console_drain` is bounded to 65,536 serialized characters as described
+above. Console property accessors preserve
+the capture wrappers when an app replaces an individual console method. The
+harness never calls into Lua; `preview_console` reads the host's already-buffered
+messages synchronously. The TypeScript doubles expose one synthetic-input seam,
+`recordConsole(entry)`, for tests; there is no second `pushConsole` alias.
 
 ## Rendering the IndexedDB tree
 

@@ -4,6 +4,12 @@ import type {
   PreviewRpcRequest,
 } from "./types.js";
 import { wrapSrcdoc } from "./responder.js";
+import {
+  copyPreviewConsoleEntries,
+  normalizePreviewConsoleEntry,
+  PREVIEW_CONSOLE_MAX_ENTRIES,
+} from "./console.js";
+import type { PreviewConsoleEntry } from "./types.js";
 
 interface RpcState {
   req: PreviewRpcRequest;
@@ -41,6 +47,8 @@ export interface WebHostPreviewOptions {
   window?: PreviewWindow;
   /** Id of the page element the iframe mounts under; falls back to <body>. */
   mountId?: string;
+  /** Maximum number of preview-console entries retained by this host. */
+  consoleLimit?: number;
 }
 
 /**
@@ -61,6 +69,11 @@ export class WebHostPreview implements HostPreview {
   private listenerBound = false;
   private readonly pending: number[] = [];
   private readonly requests = new Map<number, RpcState>();
+  private readonly consoleEntries: Array<{ sequence: number; entry: PreviewConsoleEntry }> = [];
+  private readonly consoleLimit: number;
+  private nextConsoleSequence = 0;
+  private consoleDrainSequence = 0;
+  private documentGeneration = 0;
   private nextId = 1;
   private readonly messageListener = (ev: {
     data: unknown;
@@ -68,7 +81,12 @@ export class WebHostPreview implements HostPreview {
     origin?: string;
   }) => this.onMessage(ev);
 
-  constructor(private readonly opts: WebHostPreviewOptions = {}) {}
+  constructor(private readonly opts: WebHostPreviewOptions = {}) {
+    const requested = Math.floor(opts.consoleLimit ?? PREVIEW_CONSOLE_MAX_ENTRIES);
+    this.consoleLimit = Number.isFinite(requested)
+      ? Math.max(1, requested)
+      : PREVIEW_CONSOLE_MAX_ENTRIES;
+  }
 
   private get document(): PreviewDocument {
     return this.opts.document ?? (globalThis.document as unknown as PreviewDocument);
@@ -83,8 +101,13 @@ export class WebHostPreview implements HostPreview {
   setHtml(html: string): void {
     const iframe = this.ensureIframe();
     // A fresh document is loading; hold RPCs until its responder handshakes.
+    // Console entries belong to one rendered app, so a refresh starts a new
+    // unread window and does not report failures from the old document.
     this.ready = false;
-    iframe.setAttribute("srcdoc", wrapSrcdoc(html));
+    this.documentGeneration += 1;
+    this.consoleEntries.length = 0;
+    this.consoleDrainSequence = this.nextConsoleSequence;
+    iframe.setAttribute("srcdoc", wrapSrcdoc(html, this.documentGeneration));
   }
 
   rpcStart(req: PreviewRpcRequest): number {
@@ -106,6 +129,35 @@ export class WebHostPreview implements HostPreview {
     this.requests.delete(id);
   }
 
+  drainConsole(): PreviewConsoleEntry[] {
+    const entries = this.consoleEntries
+      .filter(({ sequence }) => sequence > this.consoleDrainSequence)
+      .map(({ entry }) => entry);
+    this.consoleDrainSequence = this.nextConsoleSequence;
+    return copyPreviewConsoleEntries(entries);
+  }
+
+  uncaughtConsoleErrors(): number {
+    return this.consoleEntries.filter(
+      ({ sequence, entry }) => sequence > this.consoleDrainSequence && entry.uncaught === true,
+    ).length;
+  }
+
+  previewConsoleTail(): readonly PreviewConsoleEntry[] {
+    return copyPreviewConsoleEntries(this.consoleEntries.map(({ entry }) => entry));
+  }
+
+  /** Test/integration seam for a console message received from the iframe. */
+  recordConsole(entry: unknown): void {
+    const normalized = normalizePreviewConsoleEntry(entry);
+    if (!normalized) return;
+    this.nextConsoleSequence += 1;
+    this.consoleEntries.push({ sequence: this.nextConsoleSequence, entry: normalized });
+    if (this.consoleEntries.length > this.consoleLimit) {
+      this.consoleEntries.splice(0, this.consoleEntries.length - this.consoleLimit);
+    }
+  }
+
   dispose(): void {
     if (this.listenerBound) {
       this.window.removeEventListener("message", this.messageListener);
@@ -116,6 +168,9 @@ export class WebHostPreview implements HostPreview {
     this.ready = false;
     this.pending.length = 0;
     this.requests.clear();
+    // Keep the bounded tail available to DiagnosticsBuffer after a fatal
+    // closes the VM/iframe. A later setHtml starts a fresh document and
+    // clears it, so this does not leak across preview refreshes.
   }
 
   private ensureIframe(): PreviewIframe {
@@ -156,6 +211,8 @@ export class WebHostPreview implements HostPreview {
     const data = ev.data as {
       __fenPreview?: boolean;
       ready?: boolean;
+      type?: unknown;
+      entry?: unknown;
       id?: number;
       result?: PreviewPollResult["result"];
     } | null;
@@ -163,6 +220,17 @@ export class WebHostPreview implements HostPreview {
     if (data.ready === true) {
       this.ready = true;
       this.flushPending();
+      return;
+    }
+    if (data.type === "console") {
+      const entry = data.entry;
+      if (!entry || typeof entry !== "object") return;
+      const generation = (entry as Record<string, unknown>).generation;
+      // The iframe window is reused across srcdoc navigations. A message that
+      // was queued by the old document can therefore arrive after setHtml;
+      // source identity alone cannot distinguish it from the new document.
+      if (generation !== this.documentGeneration) return;
+      this.recordConsole(entry);
       return;
     }
     if (typeof data.id !== "number") return;

@@ -2,7 +2,8 @@
 ;; fen#99 — the agent drives the very app it just built in the virtual FS.
 ;;
 ;; This is a demo-only extension: it registers preview_refresh / preview_query
-;; / preview_click / preview_fill / preview_eval / preview_screenshot through
+;; / preview_click / preview_fill / preview_eval / preview_screenshot /
+;; preview_console through
 ;; the ordinary public :tool register kind (fen.core.extensions.register.tool),
 ;; loaded via the per-owner manifest loader (fen_web.web.boot.load-extension!),
 ;; exactly like the file tools. Owner cleanup and reload therefore apply, and
@@ -80,12 +81,58 @@
                 (error "preview RPC requires a cooperative turn (no yield-fn)")))))
     result))
 
-(fn rpc-result->tool [r]
-  (if (not r.ok)
-      (util.err (or r.error "preview RPC failed"))
-      (util.ok (if (= (type r.value) :string)
-                   r.value
-                   (json.encode (if (= r.value nil) json.null r.value))))))
+(fn unread-uncaught-count []
+  (let [host (get-host)
+        count-fn host.preview_console_uncaught_count]
+    (if (= (type count-fn) :function)
+        (or (count-fn) 0)
+        0)))
+
+(fn uncaught-marker []
+  (let [count (unread-uncaught-count)]
+    (when (> count 0)
+      (.. "\n\n" (tostring count)
+          (if (= count 1) " uncaught error since last check (use preview_console)"
+              " uncaught errors since last check (use preview_console)")))))
+
+(fn rpc-result->tool [r ?surface-errors?]
+  (let [marker (when ?surface-errors? (uncaught-marker))]
+    (if (not r.ok)
+        (util.err (.. (or r.error "preview RPC failed") (or marker "")))
+        (let [text (if (= (type r.value) :string)
+                       r.value
+                       (json.encode (if (= r.value nil) json.null r.value)))]
+          (util.ok (.. text (or marker "")))))))
+
+(local console-tool
+  {:name :preview_console
+   :label "Preview console"
+   :snippet "Read new preview console entries and uncaught errors"
+   :description (.. "Read console.log/warn/error/info/debug output and uncaught "
+                    "errors from the running preview iframe since the last "
+                    "preview_console call or preview_refresh. Arguments are "
+                    "defensively stringified and bounded; error entries include "
+                    "their stack when available.")
+   :parameters {:type :object :properties {}}
+   :execute (fn [_args _ctx _yield]
+              (let [host (get-host)
+                    drain-fn host.preview_console_drain
+                    entries (if (= (type drain-fn) :function)
+                                (or (drain-fn) [])
+                                [])]
+                ;; The browser host returns JSON text, not its JS array. A
+                ;; wasmoon JS array crosses into Lua as proxy userdata, which
+                ;; cjson cannot encode; the host owns serialization at this
+                ;; boundary. Keep the table fallback for Fennel-side doubles.
+                (if (= (type entries) :string)
+                    (util.ok entries)
+                    (= (type entries) :table)
+                    (util.ok (json.encode (if (> (length entries) 0)
+                                               entries
+                                               json.empty-array)))
+                    ;; A wasmoon JS array is proxy userdata. It must never
+                    ;; reach cjson; the browser host's contract is JSON text.
+                    (util.err "preview console host returned non-JSON data"))))})
 
 ;; --- Tool specs ---------------------------------------------------------
 
@@ -143,7 +190,7 @@
    :execute (fn [args _ctx ?yield]
               (if (or (not args.selector) (= args.selector ""))
                   (util.err "missing 'selector'")
-                  (rpc-result->tool (M.rpc! {:method :click :selector args.selector} ?yield))))})
+                  (rpc-result->tool (M.rpc! {:method :click :selector args.selector} ?yield) true)))})
 
 (local fill-tool
   {:name :preview_fill
@@ -163,7 +210,7 @@
                   (util.err "missing 'selector'")
                   (rpc-result->tool
                     (M.rpc! {:method :fill :selector args.selector
-                             :value (or args.value "")} ?yield))))})
+                             :value (or args.value "")} ?yield) true)))})
 
 (local eval-tool
   {:name :preview_eval
@@ -181,7 +228,7 @@
    :execute (fn [args _ctx ?yield]
               (if (or (not args.expr) (= args.expr ""))
                   (util.err "missing 'expr'")
-                  (rpc-result->tool (M.rpc! {:method :eval :expr args.expr} ?yield))))})
+                  (rpc-result->tool (M.rpc! {:method :eval :expr args.expr} ?yield) true)))})
 
 (local screenshot-tool
   {:name :preview_screenshot
@@ -198,7 +245,7 @@
                 (M.rpc! {:method :screenshot :selector (?. args :selector)} ?yield)))})
 
 (local tool-specs
-  [refresh-tool query-tool click-tool fill-tool eval-tool screenshot-tool])
+  [refresh-tool query-tool click-tool fill-tool eval-tool screenshot-tool console-tool])
 
 ;; Build a fresh spec table with :always exposure rather than mutating the
 ;; shared module-level singleton in tool-specs (which register would otherwise
@@ -211,7 +258,7 @@
 ;; @doc fen_web.web.preview.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the demo-only preview_refresh/query/click/fill/eval/screenshot tools through the per-owner :tool register kind, with :always exposure so the agent can drive its freshly built app without a tool_search gate. Registers fresh spec tables so the shared module-level specs are never mutated.
+;; summary: Register the demo-only preview_refresh/query/click/fill/eval/screenshot/console tools through the per-owner :tool register kind, with :always exposure so the agent can drive its freshly built app without a tool_search gate. Registers fresh spec tables so the shared module-level specs are never mutated.
 ;; tags: preview tools register extension
 (fn M.register [api]
   (each [_ spec (ipairs tool-specs)]
