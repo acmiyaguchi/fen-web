@@ -17,6 +17,9 @@
 (local move-tool (require :fen_web.tools.move))
 (local tool-search (require :fen_web.tools.tool_search))
 (local web-fetch-tool (require :fen_web.tools.web_fetch))
+(local fennel-eval-tool (require :fen_web.tools.fennel_eval))
+(local fennel-eval-helpers (require :fen_web.tools.fennel_eval_helpers))
+(local json (require :fen.util.json))
 (local tools (require :fen_web.tools))
 (local preview (require :fen_web.web.preview))
 (local api-factory (require :fen.core.extensions.loader.api))
@@ -343,16 +346,140 @@
               (let [agent {:active-tool-names {}
                            :tools (tool-registry.merged [])}
                     web-result (tool-search.execute {:query "web fetch"} {:agent agent})
-                    preview-result (tool-search.execute {:query "preview query"} {:agent agent})]
+                    preview-result (tool-search.execute {:query "preview query"} {:agent agent})
+                    eval-result (tool-search.execute {:query "fennel eval"} {:agent agent})]
                 (assert.is_false web-result.is-error?)
                 (assert.is_true (. agent.active-tool-names "web_fetch"))
                 (assert.is_false preview-result.is-error?)
-                (assert.is_true (. agent.active-tool-names "preview_query"))))))
+                (assert.is_true (. agent.active-tool-names "preview_query"))
+                (assert.is_false eval-result.is-error?)
+                (assert.is_true (. agent.active-tool-names "fennel_eval"))))))
 
         (it "errors without an agent context or for an empty query"
           (fn []
             (assert.is_true (. (tool-search.execute {:query "x"} {}) :is-error?))
             (assert.is_true (. (tool-search.execute {:query "  "} {:agent {:tools []}}) :is-error?))))))
+
+    (describe "fennel_eval"
+      (fn []
+        (it "evaluates calculations and marshals the value as JSON text"
+          (fn []
+            (let [r (fennel-eval-tool.execute
+                      {:expr "{:answer (+ 40 2) :items [1 2 3]}"} {})
+                  out (text-of r)
+                  decoded (json.decode out)]
+              (assert.is_false r.is-error?)
+              (assert.are.equal 42 decoded.answer)
+              (assert.are.same [1 2 3] decoded.items))))
+
+        (it "runs batch VFS operations through the explicit host.vfs facade"
+          (fn []
+            (write-tool.execute {:path "/input.txt" :content "hello"} {})
+            (let [r (fennel-eval-tool.execute
+                      {:expr "(do (host.vfs.write-file \"/output.txt\" (string.upper (host.vfs.read-file \"/input.txt\"))) (host.vfs.walk \"/\"))"}
+                      {})
+                  decoded (json.decode (text-of r))]
+              (assert.is_false r.is-error?)
+              (assert.are.same ["/input.txt" "/output.txt"] decoded)
+              (assert.are.equal "HELLO"
+                                (text-of (read-tool.execute {:path "/output.txt"} {}))))))
+
+        (it "routes facade paths through cwd and workspace-root"
+          (fn []
+            (write-tool.execute {:path "/workspace/project/input.txt" :content "hello"} {})
+            (let [ctx {:cwd "/workspace/project" :workspace-root "/workspace"}
+                  read-result (fennel-eval-tool.execute
+                               {:expr "(host.vfs.read-file \"input.txt\")"}
+                               ctx)
+                  outside-result (fennel-eval-tool.execute
+                                  {:expr "(host.vfs.exists? \"/outside.txt\")"}
+                                  ctx)]
+              (assert.is_false read-result.is-error?)
+              (assert.are.equal "\"hello\"" (text-of read-result))
+              (assert.is_true outside-result.is-error?)
+              (assert.is_truthy (string.find (text-of outside-result)
+                                            "outside workspace root" 1 true)))))
+
+        (it "preserves empty list-shaped facade results as JSON arrays"
+          (fn []
+            (let [r (fennel-eval-tool.execute
+                      {:expr "(host.vfs.list-dir \"/\")"} {})
+                  out (text-of r)]
+              (assert.is_false r.is-error?)
+              (assert.is_truthy (string.find out "\"dirs\":[]" 1 true))
+              (assert.is_truthy (string.find out "\"files\":[]" 1 true)))))
+
+        (it "keeps each evaluation in a fresh scratch environment"
+          (fn []
+            (let [first-env (fennel-eval-helpers.scratch-env kv)
+                  second-env (fennel-eval-helpers.scratch-env kv)]
+              (tset first-env :scratch_value 42)
+              (assert.are.equal 42 first-env.scratch_value)
+              (assert.is_nil second-env.scratch_value))))
+
+        (it "turns syntax, runtime, and non-serializable results into clean errors"
+          (fn []
+            (each [_ expr (ipairs ["(let [" "(error \"boom\")" "(fn [])"])]
+              (let [r (fennel-eval-tool.execute {:expr expr} {})]
+                (assert.is_true r.is-error?)
+                (assert.is_truthy (string.find (text-of r) "error: fennel_eval:" 1 true))))))
+
+        (it "rejects runaway expressions with a clean step-limit error"
+          (fn []
+            (let [r (fennel-eval-tool.execute {:expr "(while true nil)"} {})]
+              (assert.is_true r.is-error?)
+              (assert.is_truthy (string.find (text-of r) "execution step limit exceeded" 1 true)))))
+
+        (it "validates and clamps max_bytes"
+          (fn []
+            (let [non-numeric (fennel-eval-tool.execute
+                               {:expr "42" :max_bytes "nope"} {})
+                  too-small (fennel-eval-tool.execute
+                             {:expr "42" :max_bytes 0} {})
+                  oversized (fennel-eval-tool.execute
+                             {:expr "(string.rep \"x\" 100)" :max_bytes 10} {})]
+              (assert.is_true non-numeric.is-error?)
+              (assert.is_truthy (string.find (text-of non-numeric)
+                                            "max_bytes must be numeric" 1 true))
+              (assert.is_true too-small.is-error?)
+              (assert.is_true oversized.is-error?))))
+
+        (it "encodes nil as JSON null and drops extra return values"
+          (fn []
+            (let [nil-result (fennel-eval-tool.execute {:expr "nil"} {})
+                  values-result (fennel-eval-tool.execute {:expr "(values 1 2)"} {})]
+              (assert.is_false nil-result.is-error?)
+              (assert.are.equal "null" (text-of nil-result))
+              (assert.is_false values-result.is-error?)
+              (assert.are.equal "1" (text-of values-result)))))
+
+        (it "rejects missing host.kv and cyclic results cleanly"
+          (fn []
+            (set _G.__fen_host nil)
+            (let [missing-kv (fennel-eval-tool.execute {:expr "42"} {})]
+              (assert.is_true missing-kv.is-error?)
+              (assert.is_truthy (string.find (text-of missing-kv)
+                                            "host.kv" 1 true)))
+            (set _G.__fen_host {:kv kv})
+            (let [cycle (fennel-eval-tool.execute
+                         {:expr "(let [x {}] (tset x :self x) x)"} {})]
+              (assert.is_true cycle.is-error?)
+              (assert.is_truthy (string.find (text-of cycle) "cyclic" 1 true)))))
+
+        (it "does not let user coroutines consume the tool yield"
+          (fn []
+            (let [r (fennel-eval-tool.execute
+                      {:expr "(do (local co (coroutine.wrap (fn [] (host.vfs.list-dir \"/\")))) (co))"}
+                      {})]
+              (assert.is_true r.is-error?)
+              (assert.is_truthy (string.find (text-of r) "unknown identifier" 1 true)))))
+
+        (it "does not expose fen internals or the raw host bridge"
+          (fn []
+            (each [_ expr (ipairs ["_G" "require" "load" "os"])]
+              (let [r (fennel-eval-tool.execute {:expr expr} {})]
+                (assert.is_true r.is-error?)
+                (assert.is_truthy (string.find (text-of r) "unknown identifier" 1 true)))))))
 
     (describe "web_fetch"
       (fn []
@@ -430,23 +557,29 @@
 
     (describe "init registration"
       (fn []
-        (it "registers only the core workspace set and tool_search as :always"
+        (it "registers the core workspace set plus search-gated fennel_eval"
           (fn []
             (let [registered []
                   api {:register (fn [kind spec] (table.insert registered [kind spec]))}]
               (tools.register api)
-              (assert.are.equal 9 (length registered))
+              (assert.are.equal 10 (length registered))
               (let [names {}
+                    exposures {}
                     always-names [:read :write :edit :grep :find :ls :delete :move :tool_search]]
                 (each [_ [kind spec] (ipairs registered)]
                   (assert.are.equal :tool kind)
-                  (assert.are.equal :always spec.exposure)
-                  (tset names spec.name true))
+                  (tset names spec.name true)
+                  (tset exposures spec.name spec.exposure)
+                  (when (= spec.name :fennel_eval)
+                    (assert.is_nil (. spec :scratch-env))
+                    (assert.is_nil (. spec :vfs-facade))))
                 (each [_ n (ipairs always-names)]
-                  (assert.is_true (. names n)))
+                  (assert.is_true (. names n))
+                  (assert.are.equal :always (. exposures n)))
                 (assert.is_nil (. names :glob))
                 (assert.is_nil (. names :truncate))
-                (assert.is_nil (. names :web_fetch)))))))
+                (assert.is_nil (. names :web_fetch))
+                (assert.are.equal :search (. exposures :fennel_eval)))))))
 
         (it "registers web_fetch as :search only when explicitly enabled"
           (fn []
@@ -460,5 +593,7 @@
                   (tset names spec.name true)
                   (tset exposures spec.name spec.exposure))
                 (assert.is_true (. names :web_fetch))
-                (assert.are.equal :search (. exposures :web_fetch))))))))))
-  ))
+                (assert.is_true (. names :fennel_eval))
+                (assert.are.equal :search (. exposures :web_fetch))
+                (assert.are.equal :search (. exposures :fennel_eval))))))))))
+  )))

@@ -15,6 +15,7 @@ small core workspace set is `:always` exposed; specialized browser tools are
 | --- | --- | --- |
 | `read`, `write`, `edit`, `grep`, `find`, `ls`, `delete`, `move` | always | Browser-native workspace tools over `host.kv`. Their schemas and result conventions mirror fen. Relative paths resolve against the tool context `cwd`; otherwise the virtual filesystem root is `/`. |
 | `tool_search` | always | Registry-generic port of fen's builtin tool search. It searches `ctx.agent.tools` for `:search`-exposed contributions and records activations in `agent.active-tool-names`; it does not depend on desktop-only process/filesystem infrastructure. |
+| `fennel_eval` | search | Evaluates one Fennel expression in the same Wasmoon VM using a fresh scratch environment. Standard math/string/table helpers and an explicit `host.vfs` facade over `host.kv` support calculations and batch VFS operations. Its result is JSON text; syntax errors, runtime errors, non-serializable values, and oversized results are clean tool errors. |
 | `web_fetch` | search (opt-in) | Fetches an HTTP(S) URL through the existing `host.fetch_start`/`fetch_poll`/`fetch_dispose` seam. It is registered only when the web boot option `enableWebFetch` is explicitly `true`; the default is false. The host keeps a bounded head and the tool returns at most about 50KB, framed as untrusted web content. |
 | `preview_refresh`, `preview_query`, `preview_click`, `preview_fill`, `preview_eval`, `preview_screenshot` | search | Demo-only preview tools are activated through `tool_search`; `preview_console`, if present, remains `always` as the debugging lifeline. |
 
@@ -24,6 +25,28 @@ the workspace in the web app); `..` traversal that would escape `/` is
 rejected by `vfs.normalize`. A host may additionally supply an optional
 `ctx.workspace-root` boundary for mutating operations, but the tools do not
 promise a narrower root by default.
+
+## Fennel eval trust model and result boundary
+
+`fennel_eval` is a capability escape hatch, not a security sandbox. The agent
+already controls executable code in the Wasmoon VM, so enabling evaluation does
+not create a new trust boundary. Each call nevertheless gets a new scratch
+environment: assignments do not persist between calls, and fen registries,
+agent state, `require`, process/filesystem globals, and raw `__fen_host` are not
+ambient names. The deliberate host capability is `host.vfs`, a small facade
+backed by `host.kv` that exposes normalized read/write/delete/list/walk
+operations without exposing the raw host table. User coroutines are not
+exposed because they could consume the tool pump's cooperative yield.
+
+Every eval result is encoded with fen's JSON seam before it becomes tool text,
+including strings and `nil` (`null`). Functions, userdata, cycles, and other
+values that cjson cannot encode are returned as clean tool errors. The optional
+`max_bytes` limit rejects oversized output rather than truncating it into
+invalid JSON; obvious oversized strings and tables are rejected before cjson
+materializes the complete result. This preserves the host-protocol rule that
+no Wasmoon proxy userdata or executable value crosses into a tool result. The
+single value consumed from an expression is encoded, so extra return values
+from `(values ...)` are dropped.
 
 ## Web-fetch decision and safety
 

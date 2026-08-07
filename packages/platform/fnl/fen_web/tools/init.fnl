@@ -1,4 +1,4 @@
-;; Browser file-tool extension (fen-web#4 / fen#99 design findings).
+;; Browser workspace-tool extension (fen-web#4 / fen#99 design findings).
 ;;
 ;; fen has no filesystem seam to fill: its builtin read/edit/write/find/
 ;; grep/ls tools call io.open/io.popen/os.execute directly
@@ -31,13 +31,14 @@
    (pick-values 1 (require :fen_web.tools.tool_search))])
 
 (local web-fetch-tool (pick-values 1 (require :fen_web.tools.web_fetch)))
+(local fennel-eval-tool (pick-values 1 (require :fen_web.tools.fennel_eval)))
 
 (local M {})
 
 ;; @doc fen_web.tools.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the browser-native workspace tools plus registry-generic tool_search, with web_fetch opt-in through the web boot options.
+;; summary: Register the browser-native workspace tools, search-gated fennel_eval and registry-generic tool_search, with web_fetch opt-in through the web boot options.
 ;; tags: fen-web tools register extension
 (fn M.register [api ?opts]
   (each [_ spec (ipairs tool-specs)]
@@ -45,6 +46,12 @@
     ;; specialized browser capabilities use :search exposure below.
     (set spec.exposure :always)
     (api.register :tool spec))
+  ;; Fennel evaluation is a specialized capability: it is registered in the
+  ;; executable tool registry, but only advertised after tool_search activates
+  ;; it. The tool itself supplies a fresh scratch env and an explicit VFS
+  ;; facade; it does not inherit fen internals or the raw host bridge.
+  (set fennel-eval-tool.exposure :search)
+  (api.register :tool fennel-eval-tool)
   (when (and ?opts (?. ?opts :enable-web-fetch))
     (set web-fetch-tool.exposure :search)
     (api.register :tool web-fetch-tool))
