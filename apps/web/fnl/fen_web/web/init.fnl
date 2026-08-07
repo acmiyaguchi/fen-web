@@ -15,6 +15,7 @@
 (local ingest (require :fen_web.web.ingest))
 (local dom (require :fen_web.web.dom))
 (local fmt-tokens (. (require :fen.util.tokens) :fmt-tokens))
+(local pricing (require :fen_web.web.pricing))
 
 (local M {})
 
@@ -45,6 +46,12 @@
                     (if (not= elapsed "") (.. "  " elapsed) ""))
           :style :dim}])
       []))
+
+(fn token-pair [input output]
+  ;; Keep the labels fixed and compact so a growing session does not change
+  ;; the fragment shape or unexpectedly widen the status bar.
+  (.. (fmt-tokens (or input 0)) "/"
+      (fmt-tokens (or output 0)) " tok"))
 
 ;; @doc fen_web.web.run
 ;; kind: function
@@ -151,8 +158,10 @@
                  :order 10
                  :render (fn [_ctx]
                            (let [s state.status-info]
-                             {:text (.. (or s.provider "?") ":"
-                                        (tostring (or s.model "?")))
+                             ;; The model id already implies the provider
+                             ;; (claude-* / gpt-*); dropping the prefix buys
+                             ;; ~10 chars on a 390px viewport (#49).
+                             {:text (tostring (or s.model s.provider "?"))
                               :style :status}))})
 
   (api.register :status
@@ -166,6 +175,19 @@
                                         (fmt-tokens
                                           (or s.approx-context s.last-input)))
                               :style :status}))})
+
+  (api.register :status
+                {:name :tokens
+                 :side :left
+                 :order 25
+                 :render (fn [_ctx]
+                           (let [s state.status-info]
+                             ;; Do not put an all-zero usage fragment in the
+                             ;; first frame; it also keeps the mobile bar
+                             ;; stable until the first provider round.
+                             (when s.usage-seen?
+                               {:text (token-pair s.cum-input s.cum-output)
+                                :style :status})))})
 
   (api.register :status
                 {:name :steering-queue
@@ -184,6 +206,31 @@
                            (let [n (or state.status-info.follow-up-queued 0)]
                              (when (> n 0)
                                {:text (.. "follow:" (tostring n)) :style :status})))})
+
+  (api.register :status
+                {:name :turn-tokens
+                 :side :right
+                 :order 20
+                 :render (fn [_ctx]
+                           (let [s state.status-info]
+                             (when s.turn-usage?
+                               {:text (.. "turn:" (token-pair s.turn-input s.turn-output))
+                                :style :status})))} )
+
+  (api.register :status
+                {:name :cost
+                 :side :right
+                 :order 30
+                 :render (fn [_ctx]
+                           (let [s state.status-info
+                                 text (when s.usage-seen?
+                                        (pricing.format-cost
+                                          s.model
+                                          (or s.cum-input 0)
+                                          (or s.cum-output 0)
+                                          (or s.cum-cache-read 0)
+                                          (or s.cum-cache-write 0)))]
+                             (when text {:text text :style :status})))} )
 
   (api.register :status
                 {:name :attention
@@ -226,6 +273,27 @@
                                 :status {:provider s.provider
                                          :model s.model
                                          :approx-context s.approx-context
+                                         :last-input s.last-input
+                                         :last-output s.last-output
+                                         :last-cache-read s.last-cache-read
+                                         :last-cache-write s.last-cache-write
+                                         :last-usage? s.last-usage?
+                                         :usage-seen? s.usage-seen?
+                                         :turn-input s.turn-input
+                                         :turn-output s.turn-output
+                                         :turn-cache-read s.turn-cache-read
+                                         :turn-cache-write s.turn-cache-write
+                                         :turn-usage? s.turn-usage?
+                                         :cum-input s.cum-input
+                                         :cum-output s.cum-output
+                                         :cum-cache-read s.cum-cache-read
+                                         :cum-cache-write s.cum-cache-write
+                                         :estimated-cost (pricing.estimate
+                                                           s.model
+                                                           (or s.cum-input 0)
+                                                           (or s.cum-output 0)
+                                                           (or s.cum-cache-read 0)
+                                                           (or s.cum-cache-write 0))
                                          :steering-queued s.steering-queued
                                          :follow-up-queued s.follow-up-queued
                                          :running-label s.running-label

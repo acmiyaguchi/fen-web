@@ -37,7 +37,7 @@
 ;; @doc fen_web.web.state.status-info
 ;; kind: data
 ;; signature: table
-;; summary: Status metadata (provider/model, context estimate, queue depths, running tool, thinking/cancelling flags, turn timing) folded from bus events.
+;; summary: Status metadata (provider/model, context estimate, cumulative and per-turn token/cache usage, queue depths, running tool, thinking/cancelling flags, turn timing) folded from bus events.
 ;; tags: demo presenter state status
 
 ;; @doc fen_web.web.state.dom
@@ -66,6 +66,20 @@
  :status-info {:provider nil
                :model nil
                :last-input 0
+               :last-output 0
+               :last-cache-read 0
+               :last-cache-write 0
+               :last-usage? false
+               :usage-seen? false
+               :turn-input 0
+               :turn-output 0
+               :turn-cache-read 0
+               :turn-cache-write 0
+               :turn-usage? false
+               :cum-input 0
+               :cum-output 0
+               :cum-cache-read 0
+               :cum-cache-write 0
                :approx-context 0
                :context-estimated? true
                :context-source :estimated

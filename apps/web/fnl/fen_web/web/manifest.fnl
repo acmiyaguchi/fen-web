@@ -11,7 +11,8 @@
  :entry-module :fen_web.web
  :interactive-only? true
  :presenter :dom
- :reload-modules [:fen_web.web.ingest
+ :reload-modules [:fen_web.web.pricing
+                  :fen_web.web.ingest
                   :fen_web.web.layout
                   :fen_web.web.dom
                   :fen_web.web]

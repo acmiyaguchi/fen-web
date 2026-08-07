@@ -70,6 +70,63 @@
         (assert.is_false state.status-info.thinking?)
         (assert.are.equal 0 state.status-info.turn-start)))
 
+    (it "accumulates all provider rounds in the current turn and cumulative totals"
+      (fn []
+        ;; One agent turn can make another provider round after a tool result.
+        ;; The turn totals must keep the first round rather than showing only
+        ;; the final round's usage.
+        (ingest.append-event {:type :llm-start})
+        (ingest.append-event {:type :llm-end
+                              :usage {:input 1200 :output 400
+                                      :cache-read 80 :cache-write 20}})
+        (ingest.append-event {:type :tool-call :name "read"
+                              :arguments {:path "/tmp/a"}})
+        (ingest.append-event {:type :tool-result :name "read"
+                              :result {:content [{:type :text :text "ok"}]}})
+        (ingest.append-event {:type :llm-start})
+        (ingest.append-event {:type :llm-end
+                              :usage {:input 300 :output 100
+                                      :cache-read 30 :cache-write 4}})
+        (assert.are.equal 1500 state.status-info.cum-input)
+        (assert.are.equal 500 state.status-info.cum-output)
+        (assert.are.equal 110 state.status-info.cum-cache-read)
+        (assert.are.equal 24 state.status-info.cum-cache-write)
+        (assert.are.equal 1500 state.status-info.turn-input)
+        (assert.are.equal 500 state.status-info.turn-output)
+        (assert.are.equal 110 state.status-info.turn-cache-read)
+        (assert.are.equal 24 state.status-info.turn-cache-write)
+        (assert.is_true state.status-info.turn-usage?)
+        (assert.are.equal 300 state.status-info.last-input)
+        (assert.are.equal 100 state.status-info.last-output)
+        (assert.are.equal 30 state.status-info.last-cache-read)
+        (assert.are.equal 4 state.status-info.last-cache-write)
+        (assert.is_true state.status-info.last-usage?)))
+
+    (it "resets per-turn totals at the next turn while retaining cumulative totals"
+      (fn []
+        (ingest.append-event {:type :llm-start})
+        (ingest.append-event {:type :llm-end
+                              :usage {:input 1200 :output 400}})
+        (ingest.append-event {:type :assistant-text :text "done" :final? true})
+        (ingest.append-event {:type :llm-start})
+        (ingest.append-event {:type :llm-end
+                              :usage {:input 300 :output 100}})
+        (assert.are.equal 1500 state.status-info.cum-input)
+        (assert.are.equal 500 state.status-info.cum-output)
+        (assert.are.equal 300 state.status-info.turn-input)
+        (assert.are.equal 100 state.status-info.turn-output)))
+
+    (it "does not reuse or add stale usage when a round has no usage event"
+      (fn []
+        (ingest.append-event {:type :llm-end
+                              :usage {:input 900 :output 90}})
+        (ingest.append-event {:type :llm-start})
+        (ingest.append-event {:type :llm-end})
+        (assert.are.equal 900 state.status-info.cum-input)
+        (assert.are.equal 90 state.status-info.cum-output)
+        (assert.are.equal 0 state.status-info.last-output)
+        (assert.is_false state.status-info.last-usage?)))
+
     (it "ignores redraw events (presenter control, no transcript row)"
       (fn []
         (ingest.append-event {:type :redraw})

@@ -120,10 +120,41 @@
               (ingest.append-event {:type :user :text "hi"})
               (dom.render-frame! {})
               (assert.is_true (h.exists? "fen-sl-model"))
-              (assert.are.equal "openai:gpt-5" (. (h.node "fen-sl-model") :text))
+              (assert.are.equal "gpt-5" (. (h.node "fen-sl-model") :text))
               (assert.is_true (h.exists? "fen-row-1"))
               (assert.are.equal "> hi" (. (h.node "fen-row-1") :text))
               (assert.are.equal "row style-user" (. (h.node "fen-row-1") :class)))))
+
+        (it "renders cumulative and per-turn token totals with known-model cost"
+          (fn []
+            (let [h (setup)]
+              (dom.ensure-skeleton!)
+              (assert.is_false (h.exists? "fen-sl-tokens"))
+              (assert.is_false (h.exists? "fen-sr-cost"))
+              (ingest.append-event {:type :set-status-info
+                                    :info {:provider "anthropic"
+                                           :model "claude-haiku-4-5"}})
+              (ingest.append-event {:type :llm-end
+                                    :usage {:input 1200 :output 400}})
+              (dom.render-frame! {})
+              (assert.are.equal "1.2k/400 tok"
+                                (. (h.node "fen-sl-tokens") :text))
+              (assert.are.equal "turn:1.2k/400 tok"
+                                (. (h.node "fen-sr-turn-tokens") :text))
+              (assert.is_true (h.exists? "fen-sr-cost")))))
+
+        (it "omits cost for an unknown model while retaining token totals"
+          (fn []
+            (let [h (setup)]
+              (dom.ensure-skeleton!)
+              (ingest.append-event {:type :set-status-info
+                                    :info {:provider "anthropic"
+                                           :model "claude-future-unknown"}})
+              (ingest.append-event {:type :llm-end
+                                    :usage {:input 1000 :output 1000}})
+              (dom.render-frame! {})
+              (assert.is_true (h.exists? "fen-sl-tokens"))
+              (assert.is_false (h.exists? "fen-sr-cost")))))
 
         (it "updates a streaming assistant row in place across frames"
           (fn []

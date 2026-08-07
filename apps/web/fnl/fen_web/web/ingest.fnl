@@ -75,12 +75,95 @@
       (set row.streaming? nil)
       (set row.final? final?))))
 
+(fn ensure-status! []
+  "Backfill status fields when a reload reuses a state module created by an older presenter revision."
+  (when (= state.status-info nil)
+    (set state.status-info {}))
+  (let [s state.status-info]
+    (when (= s.last-input nil) (set s.last-input 0))
+    (when (= s.last-output nil) (set s.last-output 0))
+    (when (= s.last-cache-read nil) (set s.last-cache-read 0))
+    (when (= s.last-cache-write nil) (set s.last-cache-write 0))
+    (when (= s.last-usage? nil) (set s.last-usage? false))
+    (when (= s.usage-seen? nil) (set s.usage-seen? false))
+    (when (= s.turn-input nil) (set s.turn-input 0))
+    (when (= s.turn-output nil) (set s.turn-output 0))
+    (when (= s.turn-cache-read nil) (set s.turn-cache-read 0))
+    (when (= s.turn-cache-write nil) (set s.turn-cache-write 0))
+    (when (= s.turn-usage? nil) (set s.turn-usage? false))
+    (when (= s.cum-input nil) (set s.cum-input 0))
+    (when (= s.cum-output nil) (set s.cum-output 0))
+    (when (= s.cum-cache-read nil) (set s.cum-cache-read 0))
+    (when (= s.cum-cache-write nil) (set s.cum-cache-write 0))
+    (when (= s.approx-context nil) (set s.approx-context 0))
+    (when (= s.context-estimated? nil) (set s.context-estimated? true))
+    (when (= s.context-source nil) (set s.context-source :estimated))
+    (when (= s.steering-queued nil) (set s.steering-queued 0))
+    (when (= s.follow-up-queued nil) (set s.follow-up-queued 0))
+    (when (= s.turn-start nil) (set s.turn-start 0))
+    (when (= s.spin-frame nil) (set s.spin-frame 0))))
+
+(fn token-count [value]
+  (or (tonumber value) 0))
+
+(fn usage-input [usage]
+  (token-count (or usage.input usage.input_tokens)))
+
+(fn usage-output [usage]
+  (token-count (or usage.output usage.output_tokens)))
+
+(fn usage-cache-read [usage]
+  (token-count usage.cache-read))
+
+(fn usage-cache-write [usage]
+  (token-count usage.cache-write))
+
+(fn fold-usage! [s usage]
+  ;; The agent emits one canonical :llm-end usage event per provider round.
+  ;; It is already merged from provider stream message_start (input_tokens)
+  ;; and message_delta (output_tokens), so ingest must count only this event,
+  ;; never the provider's internal SSE deltas a second time.
+  ;;
+  ;; Failed-round accounting is intentionally tied to that canonical event:
+  ;; a failed round that emitted message_start but never reaches :llm-end
+  ;; contributes nothing, while a :llm-end carrying that merged usage counts.
+  ;; This mode-dependent boundary is the provider event contract; do not infer
+  ;; usage from partial/error events here.
+  (if usage
+      (let [input (usage-input usage)
+            output (usage-output usage)
+            cache-read (usage-cache-read usage)
+            cache-write (usage-cache-write usage)]
+        (set s.last-input input)
+        (set s.last-output output)
+        (set s.last-cache-read cache-read)
+        (set s.last-cache-write cache-write)
+        (set s.last-usage? true)
+        (set s.usage-seen? true)
+        (set s.turn-input (+ (or s.turn-input 0) input))
+        (set s.turn-output (+ (or s.turn-output 0) output))
+        (set s.turn-cache-read (+ (or s.turn-cache-read 0) cache-read))
+        (set s.turn-cache-write (+ (or s.turn-cache-write 0) cache-write))
+        (set s.turn-usage? true)
+        (set s.cum-input (+ (or s.cum-input 0) input))
+        (set s.cum-output (+ (or s.cum-output 0) output))
+        (set s.cum-cache-read (+ (or s.cum-cache-read 0) cache-read))
+        (set s.cum-cache-write (+ (or s.cum-cache-write 0) cache-write)))
+      (do
+        ;; A provider can finish without usage metadata. Do not reuse the
+        ;; previous round's figures as if they belonged to this round.
+        (set s.last-output 0)
+        (set s.last-cache-read 0)
+        (set s.last-cache-write 0)
+        (set s.last-usage? false))))
+
 ;; @doc fen_web.web.ingest.append-event
 ;; kind: function
 ;; signature: (append-event ev) -> nil
 ;; summary: Fold one bus event into the DOM presenter's transcript and status state, merging streaming assistant/thinking deltas and summarizing tool calls/results.
 ;; tags: demo ingest events transcript status
 (fn M.append-event [ev]
+  (ensure-status!)
   (let [s state.status-info]
     (if (= ev.type :set-status-info)
         (each [k v (pairs (or ev.info {}))]
@@ -88,13 +171,24 @@
 
         (= ev.type :llm-start)
         (do (set s.thinking? true)
+            (set s.last-usage? false)
+            (set s.last-output 0)
+            (set s.last-cache-read 0)
+            (set s.last-cache-write 0)
+            ;; turn-start is the boundary for one logical agent turn. A turn
+            ;; may contain several provider rounds separated by tool events;
+            ;; reset the turn accumulator only on its first :llm-start.
             (when (= (or s.turn-start 0) 0)
-              (set s.turn-start (os.time))))
+              (set s.turn-start (os.time))
+              (set s.turn-input 0)
+              (set s.turn-output 0)
+              (set s.turn-cache-read 0)
+              (set s.turn-cache-write 0)
+              (set s.turn-usage? false)))
 
         (= ev.type :llm-end)
         (do (set s.thinking? false)
-            (when ev.usage
-              (set s.last-input (or ev.usage.input s.last-input))))
+            (fold-usage! s ev.usage))
 
         (= ev.type :tool-call)
         (do (set ev.args-pretty (args->string ev.arguments))

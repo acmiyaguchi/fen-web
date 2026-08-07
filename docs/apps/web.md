@@ -26,6 +26,33 @@ see the top-level [README.md](../../README.md) non-goals.
   browser prompt. Input never calls back into Lua: `listen` ops enqueue
   events the run loop drains poll-style. The single-page HTML shell that
   mounts `#fen-app` and wires `__fen_host.dom_apply` is #7.
+
+### Status bar
+
+The DOM status bar keeps the existing `ctx:~N` context estimate and adds
+session usage as compact `N/N tok` totals. `turn:N/N tok` shows the current
+(or most recently completed) logical agent turn after usage arrives; it sums
+all provider rounds in that turn, including rounds separated by tool calls.
+The `~$0.012` entry is an estimate, not a bill: it is shown only when the
+exact model id has an entry in the best-effort, manually maintained pricing
+table (`claude-haiku-4-5` is currently $1/M input and $5/M output). Anthropic
+cache-read and cache-write usage is included in that estimate at 0.1x and
+1.25x the ordinary input rate respectively. Unknown models silently omit the
+cost entry.
+
+Usage is folded from the canonical `:llm-end` event. The Anthropic adapter
+merges `message_start.message.usage.input_tokens` with
+`message_delta.usage.output_tokens` into the assistant's canonical
+`usage.input`/`usage.output`, and also carries `cache_read_input_tokens` and
+`cache_creation_input_tokens` as `usage.cache-read`/`usage.cache-write`; the
+agent then emits that complete usage table on `:llm-end`. Provider SSE message
+deltas themselves are not bus events, so the presenter counts the `:llm-end`
+table once and does not double-count streaming updates.
+
+Token totals live in the presenter's in-memory state for the current runtime
+session only. They are not persisted to the virtual filesystem. A browser
+**Restart** creates a fresh VM/session, so the totals reset; `/reload` within
+the same runtime retains presenter state.
 - **#7 — shell + BYO-key settings (implemented).** The single-page shell
   (`apps/web/index.html` + `apps/web/src/*.ts`, bundled by Vite) wires
   the runtime + bindings + DOM presenter into a working page and runs the
