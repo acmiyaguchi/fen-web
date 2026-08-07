@@ -31,6 +31,9 @@ export interface DemoBootOptions {
   provider?: string;
   /** Model id; defaults to the provider's default when omitted. */
   model?: string;
+  /** Request max_tokens; per-model values come from the settings catalog.
+   * Fennel boot falls back to 8192 when absent. */
+  maxTokens?: number;
   /** Virtual-FS working directory/session metadata. */
   cwd?: string;
   /** Deliberately opt in to the untrusted, CORS-limited web_fetch tool. */
@@ -216,6 +219,7 @@ export async function bootDemo(
       cwd: opts.cwd ?? "/workspace",
       provider,
       model: opts.model,
+      "max-tokens": opts.maxTokens,
       // Fennel boot reads this kebab-case key; false is explicit so a
       // missing UI option can never accidentally enable web_fetch.
       "enable-web-fetch": opts.enableWebFetch === true,

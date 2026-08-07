@@ -78,6 +78,8 @@
       "errors. Be concise."))
 
 (local SUPPORTED-PROVIDERS {:anthropic true :openai-codex true})
+(local DEFAULT-ANTHROPIC-MODEL "claude-haiku-4-5")
+(local DEFAULT-CODEX-MODEL "gpt-5.6-luna")
 
 ;; Provider order per docs/apps/web.md: Anthropic first because
 ;; api.anthropic.com accepts direct-from-page calls (the fen-web fetch
@@ -90,7 +92,7 @@
   (let [spec {}]
     (each [k v (pairs anthropic)] (tset spec k v))
     (set spec.name :anthropic)
-    (set spec.default-model :claude-haiku-4-5)
+    (set spec.default-model DEFAULT-ANTHROPIC-MODEL)
     (set spec.api-key-var :ANTHROPIC_API_KEY)
     spec))
 
@@ -113,9 +115,22 @@
         spec {}]
     (each [k v (pairs codex-responses)] (tset spec k v))
     (set spec.name :openai-codex)
-    (set spec.default-model :gpt-5.6-luna)
+    (set spec.default-model DEFAULT-CODEX-MODEL)
     (set spec.auth-backend :openai-codex)
     spec))
+
+;; @doc fen_web.web.boot.model-for
+;; kind: function
+;; signature: (model-for opts ?provider) -> string
+;; summary: Resolve the explicit browser setting or the one conservative default for the provider.
+;; tags: demo boot model settings
+(fn M.model-for [opts ?provider]
+  (let [opts (or opts {})
+        provider (tostring (or ?provider opts.provider :anthropic))]
+    (or (when (and opts.model (not= opts.model "")) opts.model)
+        (if (= provider "openai-codex")
+            DEFAULT-CODEX-MODEL
+            DEFAULT-ANTHROPIC-MODEL))))
 
 ;; @doc fen_web.web.boot.load-extension!
 ;; kind: function
@@ -309,10 +324,10 @@
             session (backend.open (or opts.cwd "/workspace"))
             _info (session-backend-registry.set-info!
                     (session-lifecycle.backend-info backend session) session)
+            model (M.model-for opts provider)
             agent (agent-mod.make-agent
                     {:provider-name (if codex? :openai-codex :anthropic)
-                     :model (or opts.model
-                                (if codex? "gpt-5.6-luna" "claude-haiku-4-5"))
+                     :model model
                      :system (or opts.system DEFAULT-SYSTEM)
                      :api-key api-key
                      ;; chatgpt.com/backend-api has no CORS headers; route

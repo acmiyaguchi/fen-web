@@ -30,6 +30,16 @@
         (register.unregister-by-owner "fen_web_tools")
         (tset package.preload "fen.extensions.provider_anthropic.anthropic_messages" nil)))
 
+    (it "uses an explicit model and provider fallback in boot options"
+      (fn []
+        (assert.are.equal "claude-sonnet-5"
+                          (boot.model-for {:provider "anthropic"
+                                           :model "claude-sonnet-5"}))
+        (assert.are.equal "claude-haiku-4-5"
+                          (boot.model-for {:provider "anthropic"}))
+        (assert.are.equal "gpt-5.6-luna"
+                          (boot.model-for {:provider "openai-codex"}))))
+
     (it "preserves the registered set and last register opts across reload"
       (fn []
         (boot.load-extension! :fen_web.tools.manifest false

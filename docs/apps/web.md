@@ -55,8 +55,18 @@ see the top-level [README.md](../../README.md) non-goals.
   only in the provider request's auth header, directly to the provider
   API; no key proxy). Changing or forgetting the key cooperatively stops
   the running VM (`DemoSession.stop`) before erasing/replacing storage, so
-  the old key snapshot is actually revoked. Only `"anthropic"` is accepted
-  today; other providers are rejected up front rather than silently routed. Provider order: Anthropic is wired
+  the old key snapshot is actually revoked. The same settings gate has a
+  provider-specific **Model** dropdown. Its conservative static catalog is
+  defined once in `src/settings.ts`; Anthropic offers `claude-haiku-4-5`
+  (the default), `claude-sonnet-5`, and `claude-opus-5`. In dev builds the
+  Codex provider's pinned `gpt-5.6-luna` (default), `gpt-5.6-sol`, and
+  `gpt-5.6-terra` entries are shown when that provider is selected. The
+  selected model is stored per provider under
+  `settings/selected-model/<provider>` in the same IndexedDB-backed settings
+  store, so reload, **Restart**, and **Save & restart** use it. Production
+  builds expose only `"anthropic"`; dev builds may also expose
+  `"openai-codex"` through the local OAuth bridge. Unsupported providers are
+  rejected up front rather than silently routed. Provider order: Anthropic is wired
   first because `api.anthropic.com` accepts direct-from-page calls (the
   fetch backend adds the required `anthropic-dangerous-direct-browser-access`
   header for that host, see [../bindings/fetch.md](../bindings/fetch.md));

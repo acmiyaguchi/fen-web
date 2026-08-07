@@ -13,6 +13,37 @@ import { IndexedDbKv } from "@fen-web/bindings";
  * non-goal (README).
  */
 
+export interface ModelChoice {
+  /** Request max_tokens for this model. Adaptive-thinking models (Sonnet/
+   * Opus 5) spend thinking against the cap, so they need far more headroom
+   * than Haiku; the Fennel boot falls back to 8192 when absent. */
+  maxTokens?: number;
+  id: string;
+  label: string;
+  /** The provider's conservative built-in default. */
+  default: boolean;
+}
+
+/**
+ * The browser settings gate intentionally uses a curated catalog rather than
+ * the runtime's dynamic catalog event. Keep provider model ids in this one
+ * place so the UI and its defaulting logic cannot drift apart.
+ */
+export const MODEL_CATALOG: Readonly<Record<string, readonly ModelChoice[]>> = {
+  anthropic: [
+    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", default: true },
+    { id: "claude-sonnet-5", label: "Claude Sonnet 5", default: false, maxTokens: 32000 },
+    { id: "claude-opus-5", label: "Claude Opus 5", default: false, maxTokens: 32000 },
+  ],
+  // The Codex provider is offered only by the dev server. These are the
+  // stable ids already pinned by fen's Codex provider extension.
+  "openai-codex": [
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", default: true },
+    { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", default: false },
+    { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", default: false },
+  ],
+};
+
 export interface ProviderChoice {
   id: string;
   label: string;
@@ -20,6 +51,8 @@ export interface ProviderChoice {
   envVar: string;
   /** Whether the demo can call this provider directly from the page today. */
   browserDirect: boolean;
+  /** Models shown by the settings gate for this provider. */
+  models: readonly ModelChoice[];
   note: string;
 }
 
@@ -29,26 +62,30 @@ export interface ProviderChoice {
  * `anthropic-dangerous-direct-browser-access`). OpenAI-compatible endpoints
  * (incl. OpenRouter) come as their provider extensions land here.
  */
+const isDevBuild = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
+
 export const PROVIDERS: ProviderChoice[] = [
   {
     id: "anthropic",
     label: "Anthropic (Claude)",
     envVar: "ANTHROPIC_API_KEY",
     browserDirect: true,
+    models: MODEL_CATALOG.anthropic,
     note: "Direct browser access via anthropic-dangerous-direct-browser-access.",
   },
   // Dev-server only: the auth bridge and /__codex-proxy exist only under
   // `vite dev`, so don't offer a dead-end provider in production builds.
-  ...(import.meta.env.DEV
+  ...(isDevBuild
     ? [
         {
           id: "openai-codex",
-    label: "OpenAI Codex (ChatGPT OAuth)",
-    // No BYO key: OAuth creds come from the local fen CLI's
-    // ~/.config/fen/auth.json, bridged by the Vite dev server
-    // (/__fen/codex-auth) and seeded into the VM's kv auth path.
-    envVar: "",
-    browserDirect: false,
+          label: "OpenAI Codex (ChatGPT OAuth)",
+          // No BYO key: OAuth creds come from the local fen CLI's
+          // ~/.config/fen/auth.json, bridged by the Vite dev server
+          // (/__fen/codex-auth) and seeded into the VM's kv auth path.
+          envVar: "",
+          browserDirect: false,
+          models: MODEL_CATALOG["openai-codex"],
           note:
             "Dev-server only: uses the local fen CLI's Codex OAuth login " +
             "(run `fen --login openai-codex` first); requests relay through " +
@@ -61,6 +98,10 @@ export const PROVIDERS: ProviderChoice[] = [
 const DB_NAME = "fen-web-demo";
 const SELECTED_PROVIDER_KEY = "settings/selected-provider";
 
+function selectedModelKey(providerId: string): string {
+  return `settings/selected-model/${providerId}`;
+}
+
 function kvPath(envVar: string): string {
   return `env/apikey/${envVar}`;
 }
@@ -71,13 +112,22 @@ export function providerById(id: string): ProviderChoice {
   return p;
 }
 
-/** Storage-only surface over IndexedDB, kept separate from the DOM so it is
- * unit-testable and reusable (e.g. by the extension form later). */
-export class SettingsStore {
-  private kv: IndexedDbKv;
+export interface SettingsKv {
+  get(key: string): Promise<string | undefined>;
+  put(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+}
 
-  constructor(dbName: string = DB_NAME) {
-    this.kv = new IndexedDbKv(dbName);
+export function defaultModelForProvider(providerId: string): string {
+  const provider = providerById(providerId);
+  return provider.models.find((model) => model.default)?.id ?? provider.models[0].id;
+}
+
+export class SettingsStore {
+  private kv: SettingsKv;
+
+  constructor(dbName: string = DB_NAME, kv?: SettingsKv) {
+    this.kv = kv ?? new IndexedDbKv(dbName);
   }
 
   async getApiKey(envVar: string): Promise<string | undefined> {
@@ -98,5 +148,20 @@ export class SettingsStore {
 
   async setSelectedProvider(id: string): Promise<void> {
     await this.kv.put(SELECTED_PROVIDER_KEY, id);
+  }
+
+  async getSelectedModel(providerId: string): Promise<string> {
+    const fallback = defaultModelForProvider(providerId);
+    const stored = await this.kv.get(selectedModelKey(providerId));
+    const provider = providerById(providerId);
+    return stored && provider.models.some((model) => model.id === stored) ? stored : fallback;
+  }
+
+  async setSelectedModel(providerId: string, modelId: string): Promise<void> {
+    const provider = providerById(providerId);
+    if (!provider.models.some((model) => model.id === modelId)) {
+      throw new Error(`fen-web demo: unknown model ${modelId} for provider ${providerId}`);
+    }
+    await this.kv.put(selectedModelKey(providerId), modelId);
   }
 }
