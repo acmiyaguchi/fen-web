@@ -6,6 +6,11 @@ import path from "node:path";
 import os from "node:os";
 import type { ServerResponse } from "node:http";
 import type { Connect } from "vite";
+import {
+  createConsoleMiddleware,
+  FEN_CONSOLE_CLIENT_SNIPPET,
+  trustedClient,
+} from "./src/devConsole.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
@@ -41,29 +46,38 @@ function fenAuthPath(): string {
   return path.join(dir, "auth.json");
 }
 
-/** Loopback, or a Tailscale peer: the tailnet is an authenticated overlay
- * (WireGuard, only the user's own devices), so trusting it for the codex
- * routes is equivalent to trusting localhost. Tailscale assigns from the
- * CGNAT range 100.64.0.0/10 (v4) and fd7a:115c:a1e0::/48 (v6). Plain LAN
- * peers remain rejected. */
-function trustedClient(req: Connect.IncomingMessage): boolean {
-  let addr = req.socket.remoteAddress ?? "";
-  if (addr.startsWith("::ffff:")) addr = addr.slice(7);
-  if (addr === "127.0.0.1" || addr === "::1") return true;
-  const octets = addr.split(".").map(Number);
-  if (octets.length === 4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) {
-    return true;
-  }
-  return addr.toLowerCase().startsWith("fd7a:115c:a1e0:");
+/**
+ * Dev-only host-console bridge. The serve-only transform runs before the
+ * module script so it observes console calls before main.ts's diagnostics
+ * wrapper, while the middleware keeps the terminal route loopback/tailnet
+ * and same-origin guarded.
+ */
+function fenConsolePlugin(): Plugin {
+  return {
+    name: "fen-console-forward",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use(createConsoleMiddleware());
+    },
+    transformIndexHtml: {
+      order: "pre",
+      handler(html) {
+        return {
+          html,
+          tags: [
+            {
+              tag: "script",
+              attrs: { type: "text/javascript" },
+              children: FEN_CONSOLE_CLIENT_SNIPPET,
+              injectTo: "head-prepend",
+            },
+          ],
+        };
+      },
+    },
+  };
 }
 
-/**
- * Dev-only bridge that serves the local fen CLI's Codex OAuth credentials
- * (~/.config/fen/auth.json) to the page, which seeds them into the VM's
- * kv-backed auth path (browserBoot.ts). Dev server only — never part of a
- * build — and loopback-only, because `server.host: true` exposes the dev
- * server on the LAN and these are live ChatGPT OAuth tokens.
- */
 function fenCodexAuthPlugin(): Plugin {
   return {
     name: "fen-codex-auth",
@@ -90,7 +104,8 @@ function fenCodexAuthPlugin(): Plugin {
         // browser can hit localhost; SOP already blocks it reading the body,
         // but refuse cross-site fetches outright where the browser says so.
         const site = req.headers["sec-fetch-site"];
-        if (typeof site === "string" && site !== "same-origin" && site !== "none") {
+        const origin = req.headers.origin;
+        if (origin === "null" || (typeof site === "string" && site !== "same-origin" && site !== "none")) {
           res.statusCode = 403;
           res.end("codex routes are same-origin only");
           return;
@@ -127,7 +142,7 @@ export default defineConfig(({ mode }) => ({
   // GitHub Pages serves the app below /fen-web/, while the dev server stays
   // rooted at /. FEN_WEB_BASE is available for other deployment prefixes.
   base: process.env.FEN_WEB_BASE ?? (mode === "development" ? "/" : "/fen-web/"),
-  plugins: [fenCodexAuthPlugin()],
+  plugins: [fenConsolePlugin(), fenCodexAuthPlugin()],
   resolve: {
     alias: {
       "node:fs": nodeStub,
