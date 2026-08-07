@@ -79,7 +79,7 @@ export interface PreviewPollResult {
 
 /** The host.preview primitive. `setHtml` re-renders the preview document
  * (preview.refresh); the rpc* trio is the async postMessage bridge the
- * preview.dom/interact and legacy query/click/fill/eval/screenshot tools drive;
+ * preview.dom/interact and specialized query/click/fill/eval/screenshot tools drive;
  * `preview_console` drains the host-side console ring. */
 export interface HostPreview {
   /** Render `html` into the sandboxed iframe (creating the iframe on first use). */

@@ -74,7 +74,7 @@
       "The workspace is a virtual filesystem backed by IndexedDB; use the "
       "read/write/edit/find/grep/ls tools to work in it. When you build a web "
       "app, render it with preview_refresh; use preview_interact to click, type, "
-      "or submit and preview_dom to inspect the rendered result. Legacy preview "
+      "or submit and preview_dom to inspect the rendered result. Specialized preview "
       "tools and web_fetch are discoverable via tool_search; search for them "
       "before assuming a capability is missing. Use preview_console to see the "
       "app's console output and "

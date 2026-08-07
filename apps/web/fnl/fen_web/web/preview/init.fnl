@@ -102,7 +102,7 @@
         (util.err (.. (or r.error "preview RPC failed") (or marker "")))
         ;; Host preview bindings serialize every non-string value before it
         ;; crosses Wasmoon. A native string is therefore already the exact
-        ;; tool-facing JSON/text result; nil is the legacy absent-value shape.
+        ;; tool-facing JSON/text result; nil is the missing-value shape.
         ;; Reject anything else rather than handing proxy userdata to cjson.
         (= (type r.value) :string)
         (util.ok (.. r.value (or marker "")))
@@ -206,12 +206,14 @@
                                         :maximum 32000
                                         :description "Maximum serialized characters (default 12000)"}}}
    :execute (fn [args _ctx ?yield]
-              (rpc-result->tool
-                (M.rpc! {:method :dom
-                         :selector (or args.selector "body")
-                         :maxDepth (util.int-arg (or args.max_depth args.depth) 4)
-                         :maxSize (util.int-arg (or args.max_size args.size) 12000)}
-                        ?yield)))} )
+              (if (= args.selector "")
+                  (util.err "missing 'selector'")
+                  (rpc-result->tool
+                    (M.rpc! {:method :dom
+                             :selector (or args.selector "body")
+                             :maxDepth (util.int-arg args.max_depth 4)
+                             :maxSize (util.int-arg args.max_size 12000)}
+                            ?yield))))})
 
 (local interact-tool
   {:name :preview_interact
@@ -339,7 +341,7 @@
 ;; @doc fen_web.web.preview.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the demo-only preview_refresh/dom/interact/query/click/fill/eval/screenshot/console tools through the per-owner :tool register kind. preview_refresh, preview_dom, preview_interact, and preview_console are :always; the legacy specialized tools are :search, discoverable via tool_search. Registers fresh spec tables so the shared module-level specs are never mutated.
+;; summary: Register the demo-only preview_refresh/dom/interact/query/click/fill/eval/screenshot/console tools through the per-owner :tool register kind. preview_refresh, preview_dom, preview_interact, and preview_console are :always; the specialized tools are :search, discoverable via tool_search. Registers fresh spec tables so the shared module-level specs are never mutated.
 ;; tags: preview tools register extension
 (fn M.register [api]
   (each [_ spec (ipairs tool-specs)]

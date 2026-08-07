@@ -233,7 +233,7 @@
                 (each [_ [kind spec] (ipairs registered)]
                   (assert.are.equal :tool kind)
                   ;; Refresh, DOM, interaction, and console are the core
-                  ;; see-and-test loop; legacy specialized tools remain gated.
+                  ;; see-and-test loop; specialized tools remain gated.
                   (assert.are.equal
                     (if (or (= spec.name :preview_refresh)
                             (= spec.name :preview_dom)
@@ -303,6 +303,17 @@
               (assert.are.equal "#app" (. prev.requests 1 :selector))
               (assert.are.equal 2 (. prev.requests 1 :maxDepth))
               (assert.are.equal 512 (. prev.requests 1 :maxSize)))))
+
+        (it "preview_dom rejects an explicit empty selector and ignores undocumented aliases"
+          (fn []
+            (let [(tool prev) (tool-named :preview_dom (fn [_req] {:ok true :value "snapshot"}))
+                  empty-result (tool.execute {:selector ""} {} nil)
+                  alias-result (tool.execute {:depth 2 :size 512} {} nil)]
+              (assert.is_true empty-result.is-error?)
+              (assert.is_truthy (string.find (text-of empty-result) "missing 'selector'" 1 true))
+              (assert.is_false alias-result.is-error?)
+              (assert.are.equal 4 (. prev.requests 1 :maxDepth))
+              (assert.are.equal 12000 (. prev.requests 1 :maxSize)))))
 
         (it "preview_interact type sends text and relies on input/change dispatch"
           (fn []

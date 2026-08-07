@@ -144,9 +144,9 @@ stringified (circular values and DOM nodes are safe), capped per entry, and
 posted to the parent as bounded entries. The host-side aggregate returned by
 `preview_console_drain` is bounded to 65,536 serialized characters as described
 above. The responder also handles the `dom` and `interact` RPC methods inside
-the iframe. DOM snapshots clone the selected node, trim descendants at the
-requested depth, and cap the final outerHTML at the requested size; the live
-application DOM is never changed. Interactions stay in the iframe: click uses
+the iframe. DOM snapshots serialize the selected node incrementally under a character
+budget, trim descendants at the requested depth, and never modify the live
+application DOM. Interactions stay in the iframe: click uses
 the element's click path, type uses the native value setter when available and
 dispatches bubbling `input` and `change`, and submit dispatches a bubbling, cancelable submit event so form handlers
 run without attempting a sandboxed native navigation. Console property accessors preserve

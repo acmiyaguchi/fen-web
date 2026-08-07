@@ -102,6 +102,24 @@ test("wrapSrcdoc appends the responder after the page body", () => {
   assert.ok(doc.includes(PREVIEW_RESPONDER_SOURCE), "responder source is injected");
 });
 
+test("non-JSON-serializable RPC values become structured failures", () => {
+  const fake = new FakePreview(() => ({ ok: true, value: 1n }));
+  const id = fake.rpcStart({ method: "eval", expr: "1n" });
+  assert.deepEqual(fake.rpcPoll(id), {
+    done: true,
+    result: { ok: false, error: "result is not JSON-serializable" },
+  });
+
+  // The function-valued result is also rejected because JSON.stringify
+  // returns undefined rather than a JSON text value.
+  const functionPreview = new FakePreview(() => ({ ok: true, value: () => undefined }));
+  const functionId = functionPreview.rpcStart({ method: "eval", expr: "function () {}" });
+  assert.deepEqual(functionPreview.rpcPoll(functionId), {
+    done: true,
+    result: { ok: false, error: "result is not JSON-serializable" },
+  });
+});
+
 test("console messages are source-validated, bounded, and drain since the last check", () => {
   const dom = makeFakeDom();
   const preview = new WebHostPreview({

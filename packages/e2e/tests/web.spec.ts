@@ -151,7 +151,107 @@ test("drives the seeded starter todo through preview_interact and preview_dom", 
   await expect(frame.locator("#new-todo")).toBeVisible();
   await expect(frame.locator("#todo-list li")).toHaveCount(1);
   await expect(frame.locator("#todo-list li .todo-text")).toHaveText("Ship the iframe todo");
-  await expect(frame.locator("#remaining-count")).toHaveText("1");
+  await expect(frame.locator("#todo-list li")).toHaveClass(/done/);
+  await expect(frame.locator('#todo-list input[type="checkbox"]')).toBeChecked();
+  await expect(frame.locator("#remaining-count")).toHaveText("0");
+  await expect(frame.locator("#empty-state")).toHaveClass(/hidden/);
+
+  await router.assertComplete();
+});
+
+test("bounds real preview DOM snapshots and bypasses shadowed field setters", async ({ page }) => {
+  const router = new ScriptedAnthropicRouter(page, "preview-responder.json");
+  await router.install();
+  await startWithFakeKey(page);
+
+  await submitPrompt(page, "Render the preview responder fixture.");
+  await expectTranscript(page, "Preview responder step complete.");
+
+  const frame = page.frameLocator("#fen-preview-frame");
+  await expect(frame.locator("#new-todo")).toBeVisible();
+  await frame.locator("body").evaluate((body) => {
+    const deep = document.createElement("section");
+    deep.id = "deep-fixture";
+    let parent: HTMLElement = deep;
+    for (let i = 0; i < 6; i += 1) {
+      const child = document.createElement("div");
+      child.dataset.depth = String(i);
+      parent.append(child);
+      parent = child;
+    }
+    parent.textContent = "deep leaf";
+    body.append(deep);
+
+    const oversized = document.createElement("section");
+    oversized.id = "oversized-fixture";
+    const text = document.createElement("p");
+    text.textContent = "💥".repeat(500);
+    oversized.append(text);
+    body.append(oversized);
+
+    const input = document.createElement("input");
+    input.id = "shadowed-input";
+    const status = document.createElement("output");
+    status.id = "setter-status";
+    status.textContent = "waiting";
+    body.append(input, status);
+
+    // Mirror React's instance value tracker: an own setter records the value
+    // before the native input event. The responder must call the prototype
+    // setter so the handler sees a tracker/native-value mismatch.
+    const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    if (!native?.get || !native.set) throw new Error("native input value descriptor missing");
+    let trackedValue = input.value;
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get: () => native.get!.call(input),
+      set: (value: string) => {
+        trackedValue = String(value);
+        native.set!.call(input, value);
+      },
+    });
+    input.addEventListener("input", () => {
+      if (trackedValue !== input.value) {
+        status.textContent = input.value;
+        trackedValue = input.value;
+      }
+    });
+  });
+
+  await submitPrompt(page, "Inspect the deep preview DOM.");
+  await expectTranscript(page, "Deep snapshot inspected.");
+  await submitPrompt(page, "Inspect the oversized preview DOM.");
+  await expectTranscript(page, "Oversized snapshot inspected.");
+  await submitPrompt(page, "Verify the shadowed field receives typed input.");
+  await expectTranscript(page, "Shadowed field typed.");
+  await expect(frame.locator("#shadowed-input")).toHaveValue("typed");
+  await expect(frame.locator("#setter-status")).toHaveText("typed");
+
+  const deepSnapshot = router.toolResults().find((text) => text.includes('id="deep-fixture"'));
+  expect(deepSnapshot, "preview_dom must return the deep fixture snapshot").toBeDefined();
+  expect(deepSnapshot).toContain("...");
+  expect(deepSnapshot).not.toContain('data-depth="2"');
+  expect(deepSnapshot!.length).toBeLessThanOrEqual(128);
+
+  const oversizedSnapshot = router.toolResults().find((text) => text.includes('id="oversized-fixture"'));
+  expect(oversizedSnapshot, "preview_dom must return the oversized fixture snapshot").toBeDefined();
+  expect(oversizedSnapshot).toContain("...");
+  expect(oversizedSnapshot).toContain("💥");
+  expect(oversizedSnapshot!.length).toBeLessThanOrEqual(128);
+  for (let i = 0; i < oversizedSnapshot!.length; i += 1) {
+    const code = oversizedSnapshot!.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      expect(oversizedSnapshot!.charCodeAt(i + 1)).toBeGreaterThanOrEqual(0xdc00);
+      expect(oversizedSnapshot!.charCodeAt(i + 1)).toBeLessThanOrEqual(0xdfff);
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      expect(oversizedSnapshot!.charCodeAt(i - 1)).toBeGreaterThanOrEqual(0xd800);
+      expect(oversizedSnapshot!.charCodeAt(i - 1)).toBeLessThanOrEqual(0xdbff);
+    }
+  }
+
+  const typedResult = router.toolResults().find((text) => text.includes('"value":"typed"'));
+  expect(typedResult, "preview_interact type must echo the post-set value").toBeDefined();
 
   await router.assertComplete();
 });

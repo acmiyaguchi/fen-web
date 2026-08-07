@@ -8,7 +8,7 @@
 //
 // The message shape is symmetric with WebHostPreview: requests and replies
 // both carry `__fenPreview: true` and a numeric `id`. The responder handles
-// DOM snapshots and click/type/submit actions as well as the legacy verbs.
+// DOM snapshots and click/type/submit actions as well as the specialized verbs.
 // Replies are posted back to the request's own source/origin, never broadcast
 // to arbitrary windows.
 
@@ -32,29 +32,94 @@ export const PREVIEW_RESPONDER_SOURCE = String.raw`
     return Math.max(minimum, Math.min(maximum, Math.floor(number)));
   }
 
+  function safePrefix(value, limit) {
+    var end = Math.max(0, Math.min(value.length, limit));
+    if (end < value.length && end > 0) {
+      var previous = value.charCodeAt(end - 1);
+      var next = value.charCodeAt(end);
+      // The size contract is in UTF-16 code units, but never return a lone
+      // surrogate when a truncation boundary falls between an emoji pair.
+      if (previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
+        end -= 1;
+      }
+    }
+    return value.slice(0, end);
+  }
+
   function domSnapshot(data) {
     var selector = data.selector || "body";
     var root = document.querySelector(selector);
     if (!root) return { ok: false, error: "no element matches " + selector };
     var depth = boundedNumber(data.maxDepth, DEFAULT_DOM_DEPTH, 0, MAX_DOM_DEPTH);
     var size = boundedNumber(data.maxSize, DEFAULT_DOM_SIZE, 64, MAX_DOM_SIZE);
-    var copy = root.cloneNode(true);
+    var html = "";
+    var truncated = false;
 
-    // Trim a detached clone so the app's live DOM is never modified. The
-    // result remains outerHTML, which is useful to an agent, while maxDepth
-    // prevents a large component tree from consuming the whole context.
-    function trim(node, level) {
-      if (level >= depth) {
-        while (node.firstChild) node.removeChild(node.firstChild);
-        node.appendChild(document.createTextNode("..."));
+    // Serialize directly from the live tree with an incremental character
+    // budget. This avoids cloneNode(true) and an unbounded outerHTML string;
+    // once the budget is exhausted, traversal stops at the first truncation.
+    function append(value) {
+      if (truncated || !value) return;
+      if (html.length + value.length <= size) {
+        html += value;
         return;
       }
-      var children = node.children ? Array.prototype.slice.call(node.children) : [];
-      for (var i = 0; i < children.length; i += 1) trim(children[i], level + 1);
+      truncated = true;
+      var room = size - html.length - 3;
+      if (room > 0) html += safePrefix(value, room);
+      html = safePrefix(html, size - 3) + "...";
     }
-    trim(copy, 0);
-    var html = copy.outerHTML || String(copy.textContent || "");
-    if (html.length > size) html = html.slice(0, size - 3) + "...";
+    function appendEscaped(value, attribute) {
+      var text = String(value == null ? "" : value);
+      for (var i = 0; i < text.length; i += 1) {
+        var character = text.charAt(i);
+        if (character === "&") append("&amp;");
+        else if (attribute && character === '"') append("&quot;");
+        else if (character === "<") append("&lt;");
+        else append(character);
+        if (truncated) return;
+      }
+    }
+    function appendOpenTag(node) {
+      append("<" + String(node.tagName || "element").toLowerCase());
+      var attributes = node.attributes || [];
+      for (var i = 0; i < attributes.length; i += 1) {
+        append(" " + attributes[i].name + '=\"');
+        appendEscaped(attributes[i].value, true);
+        append("\"");
+        if (truncated) return;
+      }
+      append(">");
+    }
+    function isVoidElement(node) {
+      return /^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(
+        String(node.tagName || ""),
+      );
+    }
+    function serializeElement(node, level) {
+      if (truncated) return;
+      appendOpenTag(node);
+      if (truncated || isVoidElement(node)) return;
+      if (level >= depth) {
+        append("...");
+      } else {
+        var children = node.childNodes || [];
+        for (var i = 0; i < children.length; i += 1) {
+          var child = children[i];
+          if (child.nodeType === 1) serializeElement(child, level + 1);
+          else if (child.nodeType === 3) appendEscaped(child.nodeValue, false);
+          else if (child.nodeType === 8) {
+            append("<!--");
+            appendEscaped(child.nodeValue, false);
+            append("-->");
+          }
+          if (truncated) return;
+        }
+      }
+      append("</" + String(node.tagName || "element").toLowerCase() + ">");
+    }
+
+    serializeElement(root, 0);
     return { ok: true, value: html };
   }
 
@@ -81,6 +146,9 @@ export const PREVIEW_RESPONDER_SOURCE = String.raw`
     var target = document.querySelector(selector);
     if (!target) return { ok: false, error: "no element matches " + selector };
     if (action === "click") {
+      if (target.disabled === true) {
+        return { ok: false, error: "cannot click disabled " + String(target.tagName || "element").toLowerCase() + ": " + selector };
+      }
       if (typeof target.click === "function") target.click();
       else dispatch(target, "click");
       return { ok: true, value: { action: "click", selector: selector } };
@@ -88,7 +156,7 @@ export const PREVIEW_RESPONDER_SOURCE = String.raw`
     if (action === "type") {
       if (!("value" in target)) return { ok: false, error: "element is not a form field: " + selector };
       setFieldValue(target, data.text);
-      return { ok: true, value: { action: "type", selector: selector, events: ["input", "change"] } };
+      return { ok: true, value: { action: "type", selector: selector, value: target.value, events: ["input", "change"] } };
     }
     if (action === "submit") {
       var form = String(target.tagName || "").toLowerCase() === "form" ? target : target.form;
@@ -121,6 +189,9 @@ export const PREVIEW_RESPONDER_SOURCE = String.raw`
     if (method === "click") {
       var c = document.querySelector(data.selector);
       if (!c) return { ok: false, error: "no element matches " + data.selector };
+      if (c.disabled === true) {
+        return { ok: false, error: "cannot click disabled " + String(c.tagName || "element").toLowerCase() + ": " + data.selector };
+      }
       c.click();
       return { ok: true, value: { clicked: true } };
     }

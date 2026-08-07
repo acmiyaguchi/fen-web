@@ -118,6 +118,7 @@ export class ScriptedAnthropicRouter {
   private nextTurn = 0;
   private requestCount = 0;
   private failure: Error | undefined;
+  private readonly observedToolResults: string[] = [];
 
   constructor(
     private readonly page: Page,
@@ -184,6 +185,7 @@ export class ScriptedAnthropicRouter {
         );
       }
 
+      this.observedToolResults.push(...toolResultTexts(body));
       const response = turn.response;
       const fixturePath = path.resolve(fixturesDir, response.fixture);
       if (!fixturePath.startsWith(`${fixturesDir}${path.sep}`)) {
@@ -209,6 +211,10 @@ export class ScriptedAnthropicRouter {
       this.failure = error instanceof Error ? error : new Error(String(error));
       await route.abort("failed").catch(() => undefined);
     }
+  }
+
+  toolResults(): readonly string[] {
+    return this.observedToolResults;
   }
 
   async assertComplete(): Promise<void> {
