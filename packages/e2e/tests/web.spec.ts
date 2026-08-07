@@ -59,6 +59,55 @@ test("sends a non-ASCII user prompt as valid JSON to the scripted provider", asy
   await router.assertComplete();
 });
 
+test.describe("mobile layout", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("submits a multiline prompt as one message", async ({ page }) => {
+    const router = new ScriptedAnthropicRouter(page, "multiline.json");
+    await router.install();
+    await startWithFakeKey(page);
+    await expect(page.locator("#fen-status")).toBeVisible();
+    await expect(page.locator("#fen-inputbar")).toBeVisible();
+
+    const input = page.locator("#fen-input");
+    await input.fill("one\ntwo\nthree\nfour\nfive");
+    await expect
+      .poll(() => input.evaluate((element) => getComputedStyle(element).overflowY))
+      .toBe("auto");
+    await input.fill("First line");
+    await input.press("Shift+Enter");
+    await input.type("Second line");
+    await expect(input).toHaveValue("First line\nSecond line");
+    await input.press("Enter");
+
+    await expectTranscript(page, "> First line\nSecond line");
+    await expectTranscript(page, "Hello from the scripted provider.");
+    await router.assertComplete();
+  });
+
+  test("collapses and expands the sandbox preview", async ({ page }) => {
+    const router = new ScriptedAnthropicRouter(page, "tool-preview.json");
+    await router.install();
+    await startWithFakeKey(page);
+
+    await submitPrompt(page, "Write the e2e preview file and refresh the preview.");
+    await expectTranscript(page, "The preview was refreshed.");
+
+    const frame = page.locator("#fen-preview-frame");
+    const toggle = page.locator(".fen-preview-toggle");
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveText("Hide preview");
+    await expect(frame).toBeVisible();
+    await toggle.click();
+    await expect(frame).toBeHidden();
+    await expect(toggle).toHaveText("Show preview");
+    await toggle.click();
+    await expect(frame).toBeVisible();
+
+    await router.assertComplete();
+  });
+});
+
 test("executes ordered Anthropic tool_use turns, persists the file, and refreshes the sandbox preview", async ({
   page,
 }) => {

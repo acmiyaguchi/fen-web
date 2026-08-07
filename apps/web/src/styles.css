@@ -25,7 +25,9 @@ body {
   font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   display: flex;
   flex-direction: column;
+  /* Keep the legacy viewport unit as a fallback for older mobile browsers. */
   height: 100vh;
+  height: 100dvh;
 }
 
 .topbar {
@@ -341,7 +343,9 @@ body {
   font-size: 0.8rem;
 }
 
-.fen-preview:empty {
+/* The shell adds a toggle button before the host adds its iframe, so :empty
+   cannot describe the uninitialized mount anymore. */
+.fen-preview:not(.has-frame) {
   display: none;
 }
 
@@ -351,6 +355,19 @@ body {
   border: 1px solid #39414d;
   border-radius: 4px;
   background: #ffffff;
+}
+
+.fen-preview-toggle {
+  display: none;
+  align-self: flex-start;
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid #39414d;
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
 }
 
 .fen-status {
@@ -405,6 +422,11 @@ body {
 
 .fen-input {
   flex: 1;
+  min-width: 0;
+  min-height: 2.5rem;
+  max-height: calc(1.5em * 4 + 1rem);
+  overflow-y: hidden;
+  resize: vertical;
   background: #12151a;
   color: var(--fg);
   border: 1px solid #39414d;
@@ -523,4 +545,57 @@ body {
   border-radius: 4px;
   padding: 0.5rem;
   font: inherit;
+}
+
+@media (max-width: 600px) {
+  .fen-app {
+    padding: 0.5rem;
+    gap: 0.4rem;
+  }
+
+  .fen-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .fen-preview-toggle {
+    display: inline-flex;
+  }
+
+  .fen-preview iframe {
+    height: 40vh;
+    height: 40dvh;
+    max-height: 40dvh;
+  }
+
+  .fen-preview.collapsed iframe {
+    display: none;
+  }
+
+  /* Keep the #41 workspace panel from forcing horizontal scroll at 390px:
+     let its tree/viewer grid stack in one column and cap its height. */
+  .workspace-body {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 45vh;
+    max-height: 45dvh;
+  }
+
+  .fen-status {
+    align-items: flex-start;
+  }
+
+  .fen-status-right {
+    justify-content: flex-start;
+  }
+
+  .fen-inputbar {
+    align-items: stretch;
+    gap: 0.35rem;
+  }
+
+  .fen-send,
+  .fen-stop {
+    padding: 0 0.75rem;
+  }
 }
