@@ -623,7 +623,10 @@ test("bootDemo cancels an in-flight stream, preserves partial output, and accept
   await drainTasks(tasks, () => dom.exists("fen-input"));
   dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "stop this turn" } as DomOp]);
   dom.emit("fen-inputbar", "submit");
-  await drainTasks(tasks, () => recorder.requests.length >= 1);
+  // Cancel only once the stream has actually rendered partial output — that
+  // is the scenario ("stop an in-flight stream mid-answer"). Waiting on the
+  // request alone would fire cancel before any delta reached the transcript.
+  await drainTasks(tasks, () => transcriptText(dom).includes("partial"));
   assert.equal(recorder.requests.length, 1, "cancel test should have one in-flight request");
 
   session.cancel();
