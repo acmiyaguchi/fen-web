@@ -99,6 +99,25 @@
             (assert.are.equal "> remember this" (. rows 1 :text))
             (assert.are.equal "I remember" (. rows 2 :text))))))
 
+    (it "flushes canonical agent messages through the active session backend"
+      (fn []
+        (let [persisted []
+              backend {:append (fn [_session message]
+                                  (table.insert persisted message))}
+              agent {:messages [{:role :user :content "hello"}
+                                {:role :assistant :content "hi"}]}
+              flush (boot.flush-closure backend agent {:id "session-1"})]
+          (flush)
+          (assert.are.equal 2 (length persisted))
+          (table.insert agent.messages {:role :user :content "again"})
+          (table.insert agent.messages {:role :assistant :content "again"})
+          (flush)
+          (assert.are.equal 4 (length persisted))
+          ;; A second flush is a no-op, so the existing session lifecycle does
+          ;; not duplicate state when the presenter emits repeated events.
+          (flush)
+          (assert.are.equal 4 (length persisted)))))
+
     (it "uses an explicit model and provider fallback in boot options"
       (fn []
         (assert.are.equal "claude-sonnet-5"

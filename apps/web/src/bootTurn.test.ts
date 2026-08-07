@@ -77,6 +77,48 @@ function buildSources(): Map<string, FenSource> {
     ),
     "fen.extensions.provider_shared.streaming": path.join(sharedDir, "streaming.fnl"),
     "fen.extensions.provider_shared.retry": path.join(sharedDir, "retry.fnl"),
+    "fen.extensions.agent_state": path.join(
+      fenExtensions,
+      "behaviors",
+      "companions",
+      "agent-state",
+      "init.fnl",
+    ),
+    "fen.extensions.agent_state.tool": path.join(
+      fenExtensions,
+      "behaviors",
+      "companions",
+      "agent-state",
+      "tool.fnl",
+    ),
+    "fen.extensions.agent_state.manifest": path.join(
+      fenExtensions,
+      "behaviors",
+      "companions",
+      "agent-state",
+      "manifest.fnl",
+    ),
+    "fen.extensions.status.util": path.join(
+      fenExtensions,
+      "behaviors",
+      "inspectors",
+      "status",
+      "util.fnl",
+    ),
+    "fen.extensions.steering.service": path.join(
+      fenExtensions,
+      "behaviors",
+      "kernel",
+      "steering",
+      "service.fnl",
+    ),
+    "fen.extensions.steering.state": path.join(
+      fenExtensions,
+      "behaviors",
+      "kernel",
+      "steering",
+      "state.fnl",
+    ),
   };
   for (const [name, file] of Object.entries(manual)) {
     sources.set(name, { lang: "fnl", src: readFileSync(file, "utf8") });
@@ -333,6 +375,85 @@ test("boot host exposes preview_console_drain as bounded JSON text", () => {
   assert.equal(typeof text, "string");
   if (typeof text !== "string") throw new Error("preview_console_drain violated its JSON-text contract");
   assert.match(text, /buffered/);
+});
+
+test("bootDemo exposes agent_state without returning the stored API key", async () => {
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicToolUseSse("agent_state", "state-1", { query: "(:get)" }),
+  });
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicSse("The state surface is redacted."),
+  });
+  const recorder = recordingFetch(scripted);
+  const dom = new FakeDom("fen-app");
+  const diagnostics = new DiagnosticsBuffer();
+  const kv = makeSyncKv();
+  const otherStoredKey = "other-stored-key";
+  const oauthAccess = "oauth-access-secret";
+  const oauthRefresh = "oauth-refresh-secret";
+  kv.store.set("env/apikey/OPENAI_API_KEY", otherStoredKey);
+  kv.store.set(
+    "//.config/fen/auth.json",
+    JSON.stringify({ "openai-codex": { access: oauthAccess, refresh: oauthRefresh } }),
+  );
+  diagnostics.addSecret(KEY);
+  diagnostics.addSecret(otherStoredKey);
+  diagnostics.addSecret(oauthAccess);
+  diagnostics.addSecret(oauthRefresh);
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  let fatal: unknown;
+  const session = await bootDemo(
+    { provider: "anthropic", model: "claude-haiku-4-5" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      // The key is stored in the same env/apikey seam used by SettingsStore;
+      // it is never staged in __demo_opts or passed as a JS boot option.
+      kv,
+      dom,
+      preview: new FakePreview(),
+      fetch: recorder.fetch,
+      schedule,
+      diagnostics,
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "presenter should boot before the tool call");
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "inspect state" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await drainTasks(tasks, () => recorder.requests.length >= 2 || fatal !== undefined);
+
+  assert.equal(fatal, undefined, "agent_state should complete without a fatal boot error");
+  assert.equal(recorder.requests.length, 2, "agent_state should produce one follow-up provider request");
+  const followUpBody = recorder.requests[1].body ?? "";
+  assert.match(followUpBody, /agent_state/);
+  assert.equal(
+    followUpBody.includes(KEY),
+    false,
+    "the API key stored in IndexedDB must not be readable through agent_state",
+  );
+  assert.equal(followUpBody.includes(otherStoredKey), false);
+  assert.equal(followUpBody.includes(oauthAccess), false);
+  assert.equal(followUpBody.includes(oauthRefresh), false);
+  assert.equal(diagnostics.snapshot().includes(KEY), false, "diagnostics must also scrub the stored key");
+
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await drainTasks(tasks, () => stopped);
+  await stopPromise;
+  assert.ok(stopped, "agent_state redaction test session should stop cleanly");
 });
 
 test("bootDemo drives the demo presenter through one Anthropic turn end to end", async () => {

@@ -271,6 +271,29 @@ its fetch poller aborts all remaining transports before closing the runtime.
   entry renders through both `build-page` and `preview_refresh`), and the
   end-to-end seed assertion in `apps/web/src/bootTurn.test.ts`.
 
+**#87 - agent-state companion (implemented).** Web boot loads fen's
+`fen.extensions.agent_state` manifest and its required status/steering
+behavior modules into the browser source map. The companion remains a
+read-only tool: it can inspect the live agent, provider/model readiness,
+extension registry, diagnostics, and the active session, but it cannot
+evaluate code or mutate runtime state. The web registration supplies a
+browser-only API decorator that removes provider credential fields and exact
+stored API-key values from registry, diagnostics, introspection, and
+tool-result data. In particular, the `env/apikey/<VAR>` value used by
+`path.getenv` is never exposed as an environment tree or provider config;
+the browser diagnostics `addSecret` list continues to scrub the same value
+from reports and bus/fetch summaries.
+
+State scope is **per session**, not global. Canonical conversation messages
+are appended by the existing `fen.session_lifecycle` flush bridge to the
+active `:kv` session, and the KV backend also supports extension-state
+entries for stateful companions. Resume selects that session and restores
+its messages and extension-owned state; `/new` starts an independent state
+history. The agent-state companion itself has no mutable durable payload,
+so its `:session` view reports the current per-session identity rather than
+creating a global browser state store. All writes still go through the
+existing synchronous KV cache and browser flush path.
+
 - **#41 — workspace visibility (implemented).** The shell-owned panel in
   `src/workspacePanel.ts` reads the durable `fs:` keyspace directly through a
   separate `IndexedDbKv` connection. It displays implicit directories and

@@ -73,6 +73,26 @@ const providerSharedGlob = import.meta.glob(
   { query: "?raw", import: "default", eager: true },
 ) as RawGlob;
 
+/** The agent-state companion is a flat first-party extension. Its small
+ * behavior dependencies are mapped explicitly because the browser source map
+ * does not walk fen/extensions wholesale. */
+const agentStateGlob = import.meta.glob(
+  "../../../fen/extensions/behaviors/companions/agent-state/*.fnl",
+  { query: "?raw", import: "default", eager: true },
+) as RawGlob;
+const agentStateStatusUtilGlob = import.meta.glob(
+  "../../../fen/extensions/behaviors/inspectors/status/util.fnl",
+  { query: "?raw", import: "default", eager: true },
+) as RawGlob;
+const agentStateSteeringServiceGlob = import.meta.glob(
+  "../../../fen/extensions/behaviors/kernel/steering/service.fnl",
+  { query: "?raw", import: "default", eager: true },
+) as RawGlob;
+const agentStateSteeringStateGlob = import.meta.glob(
+  "../../../fen/extensions/behaviors/kernel/steering/state.fnl",
+  { query: "?raw", import: "default", eager: true },
+) as RawGlob;
+
 function langOf(path: string): "fnl" | "lua" {
   return path.endsWith(".lua") ? "lua" : "fnl";
 }
@@ -108,6 +128,11 @@ function addFlatPackage(
   }
 }
 
+function addExactModule(map: Map<string, FenSource>, glob: RawGlob, moduleName: string): void {
+  const source = Object.values(glob)[0];
+  if (source !== undefined) map.set(moduleName, { lang: "fnl", src: source });
+}
+
 /**
  * Build the full `createFenRuntime` source map: fen core + util, the flat
  * Anthropic and OpenAI provider trees (+ shared streaming/retry helpers),
@@ -125,5 +150,9 @@ export function buildDemoSources(): Map<string, FenSource> {
   addFlatPackage(map, anthropicGlob, "fen.extensions.provider_anthropic");
   addFlatPackage(map, openaiGlob, "fen.extensions.provider_openai");
   addFlatPackage(map, providerSharedGlob, "fen.extensions.provider_shared");
+  addFlatPackage(map, agentStateGlob, "fen.extensions.agent_state");
+  addExactModule(map, agentStateStatusUtilGlob, "fen.extensions.status.util");
+  addExactModule(map, agentStateSteeringServiceGlob, "fen.extensions.steering.service");
+  addExactModule(map, agentStateSteeringStateGlob, "fen.extensions.steering.state");
   return map;
 }
