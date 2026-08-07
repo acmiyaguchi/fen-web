@@ -37,6 +37,16 @@
         (assert.are.equal :assistant-thinking (. state.transcript 1 :type))
         (assert.are.equal :assistant-text (. state.transcript 2 :type))))
 
+    (it "closes partial streaming output and shows cancelled state"
+      (fn []
+        (ingest.append-event {:type :assistant-text-delta :content-index 0 :delta "partial"})
+        (ingest.append-event {:type :cancelling})
+        (assert.is_true state.status-info.cancelling?)
+        (ingest.append-event {:type :cancelled})
+        (assert.is_false state.status-info.cancelling?)
+        (assert.is_nil (. state.transcript 1 :streaming?))
+        (assert.are.equal :cancelled (. state.transcript 2 :type))))
+
     (it "summarizes tool-call arguments and sets the running label"
       (fn []
         (ingest.append-event {:type :tool-call :name "read" :arguments {:path "/a.txt"}})

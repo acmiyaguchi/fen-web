@@ -152,7 +152,14 @@
                               {:status p.status
                                :headers (response-headers p)
                                :body (or p.body "")}))
-              (h.fetch_dispose id))
+              (h.fetch_dispose id)
+              ;; A user cancel marks the poll terminal as "cancelled". The
+              ;; state must be disposed before yielding: cancellation unwinds
+              ;; the Fennel request, so code after this yield is not reached.
+              ;; Yielding now lets the cancellation-aware agent yield raise its
+              ;; canonical marker instead of rendering an ordinary error row.
+              (when (and p.error (= p.error "cancelled"))
+                (opts.yield)))
             (opts.yield))))
     result))
 

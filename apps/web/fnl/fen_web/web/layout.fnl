@@ -88,6 +88,8 @@
                (tostring (or ev.text ""))) :dim)
       (= ev.type :info)
       (row (or ev.text "") :dim)
+      (= ev.type :cancelled)
+      (row "cancelled" :dim)
       (row (.. (tostring (or ev.type :event)) ": "
                (tostring (or ev.text ev.delta ""))) :dim)))
 

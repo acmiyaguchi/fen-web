@@ -31,7 +31,9 @@
     (or s.running-label (if s.thinking? "thinking" ""))))
 
 (fn busy? []
-  (not= (busy-label) ""))
+  (let [ctx state.presenter-ctx]
+    (or (and ctx ctx.is-busy? (ctx.is-busy?))
+        (not= (busy-label) ""))))
 
 (fn busy-height [_ctx]
   (if (busy?) 1 0))

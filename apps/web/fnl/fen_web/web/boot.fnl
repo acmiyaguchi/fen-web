@@ -432,14 +432,19 @@
                      (fn [st line ?opts]
                        (turn-submit.submit! st line ?opts agent-mod.step
                                             events.emit))})
+            cancel! (fn []
+                      (if state.busy?
+                          (do
+                            (set state.cancel-requested? true)
+                            (events.emit {:type :cancelling})
+                            true)
+                          false))
             ctx {:state state
                  :on-submit (fn [line]
                               (state.submit-user-turn! line {:emit-user? true}))
                  :on-tick (fn [] (M.on-tick state))
                  :is-busy? (fn [] state.busy?)
-                 :request-cancel (fn []
-                                   (when state.busy?
-                                     (set state.cancel-requested? true)))
+                 :request-cancel cancel!
                  :get-turn (fn [] state.turn)}]
         ;; Bridge :message-appended into the session flush closure so the
         ;; agent's per-message appends persist as they land (not just at
@@ -451,6 +456,11 @@
         ;; instead of the JS side hard-closing the VM mid-loop.
         (set _G.__fen_demo_request_stop
              (fn [] (let [s (require :fen_web.web.state)] (set s.quit? true))))
+        ;; JS calls this hook for Stop/Esc. It returns whether a live turn
+        ;; existed so the shell can keep idle cancellation a no-op; the host
+        ;; poller abort is performed by DemoSession.cancel immediately after
+        ;; this hook returns.
+        (set _G.__fen_demo_request_cancel cancel!)
         (emit-initial-status! opts agent)
         (emit-agent-started! agent opts)
         (let [(init-ok? init-err) (presenter-registry.init-active-presenter ctx)]

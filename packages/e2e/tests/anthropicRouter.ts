@@ -20,6 +20,10 @@ interface ScriptResponse {
   status?: number;
   contentType?: string;
   headers?: Record<string, string>;
+  /** Delay fulfillment so Stop/Esc can abort an in-flight request. */
+  delayMs?: number;
+  /** An aborted delayed route is an expected consumed fixture turn. */
+  allowAbort?: boolean;
 }
 
 interface ScriptTurn {
@@ -30,6 +34,10 @@ interface ScriptTurn {
 interface ScriptFile {
   name: string;
   turns: ScriptTurn[];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function loadScript(name: string): ScriptFile {
@@ -183,12 +191,20 @@ export class ScriptedAnthropicRouter {
       }
       const bodyText = readFileSync(fixturePath, "utf8");
       this.nextTurn += 1;
-      await route.fulfill({
-        status: response.status ?? 200,
-        contentType: response.contentType ?? "text/event-stream",
-        headers: { ...response.headers, "Access-Control-Expose-Headers": "retry-after-ms" },
-        body: bodyText,
-      });
+      if (response.delayMs && response.delayMs > 0) await sleep(response.delayMs);
+      try {
+        await route.fulfill({
+          status: response.status ?? 200,
+          contentType: response.contentType ?? "text/event-stream",
+          headers: { ...response.headers, "Access-Control-Expose-Headers": "retry-after-ms" },
+          body: bodyText,
+        });
+      } catch (error) {
+        // A browser Stop aborts the request while this delayed fixture is
+        // pending. The route is already consumed and this failure is the
+        // expected transport observation, not a router-script failure.
+        if (!response.allowAbort) throw error;
+      }
     } catch (error) {
       this.failure = error instanceof Error ? error : new Error(String(error));
       await route.abort("failed").catch(() => undefined);

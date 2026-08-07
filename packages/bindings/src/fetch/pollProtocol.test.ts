@@ -58,6 +58,33 @@ test("fetchStart/fetchPoll drains chunks then reports done", async () => {
   assert.ok(after.done);
 });
 
+test("fetchPoll aborts the underlying request and settles as cancelled", async () => {
+  let abortCalls = 0;
+  const host: HostFetch = {
+    fetch(opts) {
+      opts.registerAbort?.(() => {
+        abortCalls += 1;
+      });
+      return new Promise<never>(() => undefined);
+    },
+  };
+
+  const poller = new FetchPoller(host);
+  const id = poller.start({ method: "GET", url: "https://example.com" });
+  poller.abort(id);
+
+  assert.equal(abortCalls, 1, "abort must reach the transport seam immediately");
+  assert.deepEqual(poller.poll(id), {
+    chunks: [],
+    done: true,
+    status: undefined,
+    headers: undefined,
+    body: undefined,
+    error: "cancelled",
+  });
+  poller.dispose(id);
+});
+
 test("fetchPoll surfaces {error} from a failed request", async () => {
   const stub = new ScriptedFetch();
   stub.enqueue({ status: 200, chunks: [], hang: true });

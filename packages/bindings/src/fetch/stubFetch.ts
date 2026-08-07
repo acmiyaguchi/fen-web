@@ -26,6 +26,8 @@ export interface ScriptedResponse {
   abortAfterChunks?: number;
   /** Error text for abortAfterChunks (defaults to "aborted"). */
   abortMessage?: string;
+  /** Stop after this many delivered chunks until the request is aborted. */
+  hangAfterChunks?: number;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -48,6 +50,16 @@ export interface ScriptedRequest {
 export class ScriptedFetch implements HostFetch {
   private queue: ScriptedResponse[] = [];
   private _lastRequest: ScriptedRequest | undefined;
+  private _abortCount = 0;
+
+  /** Number of requests for which the optional abort seam was invoked. */
+  get abortCount(): number {
+    return this._abortCount;
+  }
+
+  get aborted(): boolean {
+    return this._abortCount > 0;
+  }
 
   /** The most recent request after transport-side byte normalization. */
   get lastRequest(): ScriptedRequest | undefined {
@@ -59,6 +71,21 @@ export class ScriptedFetch implements HostFetch {
   }
 
   async fetch(opts: FetchRequestOptions): Promise<FetchResult> {
+    let aborted = false;
+    let rejectAbort!: (reason: unknown) => void;
+    const abortPromise = new Promise<never>((_, reject) => {
+      rejectAbort = reject;
+    });
+    // If a direct caller never enters a delay/race, an abort must still not
+    // create an unhandled rejection in this test transport.
+    abortPromise.catch(() => undefined);
+    opts.registerAbort?.(() => {
+      if (aborted) return;
+      aborted = true;
+      this._abortCount += 1;
+      rejectAbort(new Error("cancelled"));
+    });
+
     try {
       assertAsciiHeaders(opts.headers);
     } catch (err) {
@@ -83,7 +110,11 @@ export class ScriptedFetch implements HostFetch {
       if (!opts.timeoutMs) {
         throw new Error("ScriptedFetch: hanging response requires opts.timeoutMs");
       }
-      await sleep(opts.timeoutMs);
+      try {
+        await Promise.race([sleep(opts.timeoutMs), abortPromise]);
+      } catch {
+        return { error: "cancelled" };
+      }
       return { error: "timeout" };
     }
 
@@ -101,12 +132,11 @@ export class ScriptedFetch implements HostFetch {
       if (text.length === 0) return;
       try {
         // Match WebHostFetch: a poll-based sink can hold this delivery until
-        // the next poll drains its bounded pending queue. Parity note: the
-        // idle watchdog measures scripted SERVER delay only (delayMs above);
-        // time parked on the consumer never counts, and a dispose() while
-        // parked surfaces as a clean error result, mirroring WebHostFetch's
-        // catch-all.
-        await opts.onChunk?.(text);
+        // the next poll drains its bounded pending queue. An abort while
+        // parked on the delivery unwinds via abortPromise, so a cancel does
+        // not wait on a sink that will never drain.
+        const delivery = opts.onChunk?.(text);
+        if (delivery) await Promise.race([delivery, abortPromise]);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw new Error(message);
@@ -134,17 +164,28 @@ export class ScriptedFetch implements HostFetch {
       // available and return this failure without invoking onChunk.
       if (delayMs > 0) {
         if (idleTimeoutMs > 0 && delayMs >= idleTimeoutMs) {
-          await sleep(idleTimeoutMs);
+          try {
+            await Promise.race([sleep(idleTimeoutMs), abortPromise]);
+          } catch {
+            return { error: "cancelled" };
+          }
           return { error: "idle timeout" };
         }
-        await sleep(delayMs);
+        try {
+          await Promise.race([sleep(delayMs), abortPromise]);
+        } catch {
+          return { error: "cancelled" };
+        }
       }
 
       const wireBytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
       const text = decoder.decode(wireBytes, { stream: true });
       try {
+        // deliverText (post-#75) races onChunk against abortPromise and owns
+        // the streaming-decode body accumulation.
         await deliverText(text);
       } catch (err) {
+        if (aborted) return { error: "cancelled" };
         const message = err instanceof Error ? err.message : String(err);
         return { error: message };
       }
@@ -156,6 +197,19 @@ export class ScriptedFetch implements HostFetch {
       ) {
         return { error: response.abortMessage ?? "aborted" };
       }
+
+      // Simulate a server that streams N chunks then stalls forever: only an
+      // abort (Stop button / cancel) breaks out.
+      if (
+        response.hangAfterChunks !== undefined &&
+        deliveredChunks >= response.hangAfterChunks
+      ) {
+        try {
+          await abortPromise;
+        } catch {
+          return { error: "cancelled" };
+        }
+      }
     }
 
     const tail = decoder.decode();
@@ -163,6 +217,7 @@ export class ScriptedFetch implements HostFetch {
       try {
         await deliverText(tail);
       } catch (err) {
+        if (aborted) return { error: "cancelled" };
         const message = err instanceof Error ? err.message : String(err);
         return { error: message };
       }

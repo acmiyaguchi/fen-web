@@ -29,9 +29,10 @@ import type { FetchRequestOptions, FetchResult, HostFetch } from "./types.js";
 // terminal state only after every chunk has crossed the poll boundary. When
 // the batch is full, the transport awaits space created by the next poll.
 // fetchDispose drops the state and unblocks a producer that is parked on
-// backpressure. The runtime package wires __fen_host.fetch_start /
-// __fen_host.fetch_poll / __fen_host.fetch_dispose to a shared FetchPoller
-// instance's start / poll / dispose methods.
+// backpressure; fetchAbort marks a live state cancelled and invokes its
+// transport abort hook without deleting it. The runtime package wires
+// __fen_host.fetch_start / __fen_host.fetch_poll / __fen_host.fetch_abort /
+// __fen_host.fetch_dispose to a shared FetchPoller instance.
 
 export interface FetchPollResult {
   /** Chunks received since the last poll, in order, already drained. */
@@ -84,6 +85,10 @@ interface PollState {
   headers?: Record<string, string>;
   body?: string;
   error?: string;
+  /** Transport-side abort hook, installed by a HostFetch that supports it. */
+  abortUnderlying?: () => void;
+  /** True after FetchPoller.abort marks the request terminal. */
+  cancelled?: boolean;
 }
 
 // A poll is the only point at which the Fennel coroutine can consume data.
@@ -123,8 +128,15 @@ export class FetchPoller {
       // Promise.resolve also keeps a non-conforming synchronous host from
       // escaping start() without transitioning this request to an error.
       fetchPromise = Promise.resolve(
+        // `registerAbort` is an optional extension of the request options,
+        // not a change to HostFetch.fetch, so hosts without an abort seam
+        // remain valid and still receive the poller's terminal cancellation
+        // state.
         this.host.fetch({
           ...opts,
+          registerAbort: (abort) => {
+            state.abortUnderlying = abort;
+          },
           onChunk: (bytes) => this.enqueue(state, bytes),
         }),
       );
@@ -134,7 +146,7 @@ export class FetchPoller {
 
     fetchPromise
       .then((result) => {
-        if (state.disposed) return;
+        if (state.disposed || state.cancelled) return;
         if (this.isFetchFailure(result)) {
           state.error = result.error;
         } else {
@@ -148,7 +160,7 @@ export class FetchPoller {
         state.done = true;
       })
       .catch((err) => {
-        if (state.disposed) return;
+        if (state.disposed || state.cancelled) return;
         state.error = err instanceof Error ? err.message : String(err);
         state.done = true;
       });
@@ -240,19 +252,59 @@ export class FetchPoller {
     };
   }
 
-  /** Drop state for a request and cancel a producer parked on backpressure.
-   * fetch.fnl calls this in its terminal branch; callers abandoning a VM
-   * should prefer disposeAll() so an in-flight stream cannot retain a reader
-   * or response body after the VM is closed. */
+  /** Abort a live request without dropping its poll state. The next poll
+   * observes `{error: "cancelled"}` and the Fennel terminal branch then calls
+   * dispose(), while the transport's AbortController is cancelled immediately
+   * rather than waiting for another poll boundary. */
+  abort(id: number): void {
+    const state = this.requests.get(id);
+    if (!state || state.disposed || state.cancelled) return;
+    state.cancelled = true;
+    state.error = "cancelled";
+    state.done = true;
+    try {
+      state.abortUnderlying?.();
+    } catch {
+      // Cancellation is best effort at the transport seam; the terminal poll
+      // state still guarantees that the Lua loop can unwind and dispose it.
+    }
+    const cancellation = new Error("FetchPoller: request was aborted");
+    for (const waiting of state.waitingChunks.splice(0)) waiting.reject(cancellation);
+  }
+
+  /** Abort every live request, retaining their terminal state until the Lua
+   * poll loop disposes them. Used by the user cancel path. */
+  abortAll(): void {
+    for (const id of [...this.requests.keys()]) this.abort(id);
+  }
+
+  /** Drop state for a request and cancel its underlying transport and any
+   * producer parked on backpressure. fetch.fnl calls this in its terminal
+   * branch; callers abandoning a VM should prefer disposeAll() so an
+   * in-flight stream cannot retain a reader or response body after the VM is
+   * closed. */
   dispose(id: number): void {
     const state = this.requests.get(id);
     if (!state) return;
     state.disposed = true;
     this.requests.delete(id);
-
+    const wasParked = state.waitingChunks.length > 0;
     const cancellation = new FetchPollerDisposedError();
     for (const waiting of state.waitingChunks.splice(0)) {
       waiting.reject(cancellation);
+    }
+    // Rejecting a parked onChunk promise is enough to unwind a reader that is
+    // currently applying poller backpressure, and preserves the distinguishable
+    // disposed result for hosts that report that rejection. When no producer
+    // is parked, abort the underlying read/connection immediately. A completed
+    // request has already released its transport; calling its registration
+    // after normal fetch_dispose would report a false abort.
+    if (!state.done && !wasParked) {
+      try {
+        state.abortUnderlying?.();
+      } catch {
+        // Resource teardown is best effort; the state is already abandoned.
+      }
     }
     // The host callback closes over state until its promise settles. Clear
     // all retained body data now rather than waiting for that continuation.

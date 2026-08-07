@@ -1,0 +1,17 @@
+{
+  "name": "cancel",
+  "turns": [
+    {
+      "request": { "userText": "Stop the runaway turn." },
+      "response": {
+        "fixture": "happy.sse",
+        "delayMs": 1000,
+        "allowAbort": true
+      }
+    },
+    {
+      "request": { "userText": "Work after cancellation." },
+      "response": { "fixture": "cancel-final.sse" }
+    }
+  ]
+}

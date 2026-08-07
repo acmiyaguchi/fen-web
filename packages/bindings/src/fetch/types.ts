@@ -43,6 +43,11 @@ export interface FetchRequestOptions {
    * stays in Fennel; this flag just tells the TS transport how much to
    * hold in memory. */
   accumulateBody?: boolean;
+  /** Optional host-side cancellation registration. FetchPoller supplies this
+   * callback without changing HostFetch.fetch's method shape; transports that
+   * own an AbortController (or an equivalent cancellation primitive) register
+   * it here. Hosts that do not support mid-request abort may ignore it. */
+  registerAbort?: (abort: () => void) => void;
 }
 
 /** Bound on retained body bytes when accumulateBody is false — mirrors
