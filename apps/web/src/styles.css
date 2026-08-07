@@ -215,7 +215,10 @@ body {
 
 .fen-status {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
   color: var(--dim);
   font-size: 0.85rem;
 }
@@ -223,7 +226,20 @@ body {
 .fen-status-left,
 .fen-status-right {
   display: flex;
+  flex: 1 1 12rem;
+  flex-wrap: wrap;
   gap: 0.75rem;
+  min-width: 0;
+}
+
+.fen-status-right {
+  justify-content: flex-end;
+}
+
+.fen-status-left > *,
+.fen-status-right > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .fen-transcript {

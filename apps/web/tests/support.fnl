@@ -133,6 +133,14 @@
   (set state.quit? false)
   (set state.transcript [])
   (set state.status-info {:provider nil :model nil :last-input 0
+                          :last-output 0 :last-cache-read 0
+                          :last-cache-write 0 :last-usage? false
+                          :usage-seen? false
+                          :turn-input 0 :turn-output 0
+                          :turn-cache-read 0 :turn-cache-write 0
+                          :turn-usage? false
+                          :cum-input 0 :cum-output 0
+                          :cum-cache-read 0 :cum-cache-write 0
                           :approx-context 0 :context-estimated? true
                           :context-source :estimated :steering-queued 0
                           :follow-up-queued 0 :running-label nil
