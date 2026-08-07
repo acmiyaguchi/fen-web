@@ -6,6 +6,7 @@
 
 (local util (require :fen_web.tools.util))
 (local vfs (require :fen_web.tools.vfs))
+(local path-ops (require :fen_web.tools.path_ops))
 
 (local LINES-BEFORE-YIELD 512)
 
@@ -78,24 +79,27 @@
                (string.sub result (+ m.end 1))))))
   result)
 
-(fn validate-edit-file [path edits ?yield-fn]
+(fn validate-edit-file [path edits ctx ?yield-fn]
   (if (or (not path) (= path ""))
       (values nil "missing 'path'")
       (or (not edits) (= (length edits) 0))
       (values nil "missing 'edits'")
-      (let [(content rerr) (vfs.read-file (util.get-kv) path)]
-        (if rerr
-            (values nil rerr)
-            (do
-              (util.maybe-yield ?yield-fn)
-              (let [(matches verr) (validate-edits content edits ?yield-fn)]
-                (if verr
-                    (values nil verr)
-                    (values {:path path
-                             :edits edits
-                             :content content
-                             :matches matches}
-                            nil))))))))
+      (let [(resolved perr) (path-ops.resolve-path path ctx)]
+        (if perr
+            (values nil perr)
+            (let [(content rerr) (vfs.read-file (util.get-kv) resolved)]
+              (if rerr
+                  (values nil rerr)
+                  (do
+                    (util.maybe-yield ?yield-fn)
+                    (let [(matches verr) (validate-edits content edits ?yield-fn)]
+                      (if verr
+                          (values nil verr)
+                          (values {:path resolved
+                                   :edits edits
+                                   :content content
+                                   :matches matches}
+                                  nil))))))))))
 
 (fn write-edit-file [validated ?yield-fn]
   (util.maybe-yield ?yield-fn)
@@ -104,8 +108,8 @@
     (util.maybe-yield ?yield-fn)
     (if (not ok?) (values nil werr) (values true nil))))
 
-(fn run-edit-one [{: path : edits} ?yield-fn]
-  (let [(validated verr) (validate-edit-file path edits ?yield-fn)]
+(fn run-edit-one [{: path : edits} ctx ?yield-fn]
+  (let [(validated verr) (validate-edit-file path edits ctx ?yield-fn)]
     (if verr
         (util.err verr)
         (let [(_ werr) (write-edit-file validated ?yield-fn)]
@@ -114,7 +118,7 @@
               (util.ok (.. "applied " (tostring (length edits))
                            " edit(s) to " path)))))))
 
-(fn run-edit-batch [files ?yield-fn]
+(fn run-edit-batch [files ctx ?yield-fn]
   (if (or (not files) (= (length files) 0))
       (util.err "missing 'files'")
       (let [validated []
@@ -128,12 +132,12 @@
                   ;; vfs file, and letting both through would validate
                   ;; both against the same original snapshot and then
                   ;; have the second write silently clobber the first.
-                  (norm _nerr) (if path (vfs.normalize path) (values nil nil))]
+                  (norm _nerr) (if path (path-ops.resolve-path path ctx) (values nil nil))]
               (if (and norm (. seen norm))
                   (set error-msg (.. path ": duplicate path in files batch; combine edits for the same file in one entry"))
                   (do
                     (when norm (tset seen norm true))
-                    (let [(v verr) (validate-edit-file path (?. f :edits) ?yield-fn)]
+                    (let [(v verr) (validate-edit-file path (?. f :edits) ctx ?yield-fn)]
                       (if verr
                           (set error-msg (.. (or path (.. "file " (tostring i))) ": " verr))
                           (table.insert validated v)))))))
@@ -154,15 +158,15 @@
                   (util.err write-err)
                   (util.ok (table.concat summaries "\n"))))))))
 
-(fn run-edit [args _ctx ?yield-fn]
+(fn run-edit [args ctx ?yield-fn]
   (let [has-single? (or (and args.path (not= args.path ""))
                          (not= args.edits nil))
         has-files? (not= args.files nil)]
     (if (and has-single? has-files?)
         (util.err "provide either 'path'/'edits' or 'files', not both")
         has-files?
-        (run-edit-batch args.files ?yield-fn)
-        (run-edit-one args ?yield-fn))))
+        (run-edit-batch args.files ctx ?yield-fn)
+        (run-edit-one args ctx ?yield-fn))))
 
 {:name :edit
  :label "Edit"

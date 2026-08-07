@@ -18,7 +18,7 @@ local platform_tests = "packages/platform/tests"
 local fen_core_src = "fen/packages/core/src"
 local fen_util_src = "fen/packages/util/src"
 
-local roots = { platform_root, platform_tests, fen_core_src, fen_util_src }
+local roots = { "apps/web/fnl", platform_root, platform_tests, fen_core_src, fen_util_src }
 local path_parts = {}
 for _, root in ipairs(roots) do
   table.insert(path_parts, root .. "/?.fnl")

@@ -55,12 +55,27 @@
 
 (local M {})
 
+;; A reload caller often has no reason to know the extension's boot flags.
+;; Retain the last explicit registration options per manifest so omitting
+;; ?register-opts on reload does not silently disable an opt-in tool such as
+;; web_fetch. Store a shallow copy so a later caller mutation cannot rewrite
+;; the retained contract.
+(local last-register-opts {})
+
+(fn copy-table [source]
+  (let [out {}]
+    (each [k v (pairs (or source {}))] (tset out k v))
+    out))
+
 (local DEFAULT-SYSTEM
   (.. "You are fen, a coding agent running entirely in the user's browser. "
       "The workspace is a virtual filesystem backed by IndexedDB; use the "
       "read/write/edit/find/grep/ls tools to work in it. When you build a web "
-      "app, render it with preview_refresh and drive it with preview_query/"
-      "click/fill/eval/screenshot to verify it works. Be concise."))
+      "app, render it with preview_refresh; further preview tools (query/"
+      "click/fill/eval/screenshot) and web_fetch are discoverable via "
+      "tool_search — search for them before assuming a capability is "
+      "missing. Use preview_console to see the app's console output and "
+      "errors. Be concise."))
 
 (local SUPPORTED-PROVIDERS {:anthropic true :openai-codex true})
 
@@ -104,13 +119,17 @@
 
 ;; @doc fen_web.web.boot.load-extension!
 ;; kind: function
-;; signature: (load-extension! manifest-module ?reload?) -> {:owner :manifest :reload-modules :reload-exclude}
-;; summary: In-page analog of fen.core.extensions.loader's module-spec load, built from the loader's own PUBLIC pieces (api factory, manifest reader, owner-scoped registry) so the manifest/reload/owner contract is real without the CLI loader (whose compiler dep pulls fen.runtime, absent in-VM). Reads :entry-module/:reload-modules/:reload-exclude, drops prior owner contributions first, clears the right package.loaded entries, then requires the entry and calls its register fn with a privileged owner-scoped api.
+;; signature: (load-extension! manifest-module ?reload? ?register-opts) -> {:owner :manifest :reload-modules :reload-exclude}
+;; summary: In-page analog of fen.core.extensions.loader's module-spec load, built from the loader's own PUBLIC pieces (api factory, manifest reader, owner-scoped registry) so the manifest/reload/owner contract is real without the CLI loader (whose compiler dep pulls fen.runtime, absent in-VM). Reads :entry-module/:reload-modules/:reload-exclude, drops prior owner contributions first, clears the right package.loaded entries, then requires the entry and calls its register fn with a privileged owner-scoped api and retained boot options.
 ;; tags: demo boot extensions loader manifest reload
-(fn M.load-extension! [manifest-module ?reload?]
+(fn M.load-extension! [manifest-module ?reload? ?register-opts]
   (let [manifest (require manifest-module)
         owner (tostring (or (?. manifest :name) manifest-module))
-        entry-module (manifest-mod.entry-module-of manifest)]
+        entry-module (manifest-mod.entry-module-of manifest)
+        register-opts (if (= ?register-opts nil)
+                          (or (. last-register-opts manifest-module) {})
+                          ?register-opts)]
+    (tset last-register-opts manifest-module (copy-table register-opts))
     (when (not entry-module)
       (error (.. "fen_web.web.boot: manifest " (tostring manifest-module)
                  " has no :entry-module")))
@@ -135,17 +154,17 @@
             register-fn (manifest-mod.entry-register entry)
             api (api-factory.make-api owner manifest {:privileged? true})]
         (when (= (type register-fn) :function)
-          (register-fn api))
+          (register-fn api register-opts))
         {:owner owner :manifest manifest
          :reload-modules reload-modules :reload-exclude reload-exclude}))))
 
 ;; @doc fen_web.web.boot.reload-extension!
 ;; kind: function
-;; signature: (reload-extension! manifest-module) -> {:owner ...}
-;; summary: Reload a previously loaded fen-web extension by manifest module, honoring its manifest reload-modules/reload-exclude. A full in-page /reload command is deferred to fen-web#19; this exposes the underlying honest reload so the contract is not dead code.
+;; signature: (reload-extension! manifest-module ?register-opts) -> {:owner ...}
+;; summary: Reload a previously loaded fen-web extension by manifest module, honoring its manifest reload-modules/reload-exclude and preserving optional registration flags.
 ;; tags: demo boot extensions reload
-(fn M.reload-extension! [manifest-module]
-  (M.load-extension! manifest-module true))
+(fn M.reload-extension! [manifest-module ?register-opts]
+  (M.load-extension! manifest-module true ?register-opts))
 
 ;; Register a manifest-less first-party contribution (provider, session
 ;; backend) with an owner-scoped privileged api so owner cleanup still
@@ -272,6 +291,13 @@
                               (api.register :provider spec)))
           (register-inline! :fen_web_provider_anthropic
                             (fn [api] (api.register :provider spec))))
+      ;; Web fetching is a deliberate capability: its registration is gated
+      ;; by opts.enable-web-fetch and defaults false in the JS boot options.
+      ;; Stage only this manifest's option shape, then use the ordinary
+      ;; no-opts load path; load-extension! consumes the retained options and
+      ;; the same defaulting path is what reload-extension! exercises.
+      (tset last-register-opts :fen_web.tools.manifest
+            {:enable-web-fetch (= true opts.enable-web-fetch)})
       (M.load-extension! :fen_web.tools.manifest)
       ;; Demo-only preview tools (fen-web#8): the agent drives the app it just
       ;; built in the vfs through the sandboxed iframe over host.preview.
@@ -294,6 +320,11 @@
                      :provider-options (if codex? {:base-url "/__codex-proxy"} {})
                      :max-tokens (or opts.max-tokens 8192)
                      :tools (tool-registry.merged [])
+                     ;; The vfs is rooted at `/`; cwd remains session metadata
+                     ;; and does not narrow the virtual workspace tree.
+                     :tool-context (fn [_]
+                                     {:cwd (or opts.cwd "/workspace")
+                                      :workspace-root "/"})
                      :on-event (fn [ev] (events.emit ev))})
             flush (M.flush-closure backend agent session)
             _state-box {:state nil}

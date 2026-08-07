@@ -61,7 +61,14 @@ see the top-level [README.md](../../README.md) non-goals.
   fetch backend adds the required `anthropic-dangerous-direct-browser-access`
   header for that host, see [../bindings/fetch.md](../bindings/fetch.md));
   OpenAI-compatible endpoints (incl. OpenRouter) follow as their provider
-  extensions land in the bundle. fen's kv-backed seams (sessions,
+  extensions land in the bundle. The browser workspace extension registers
+  fen-compatible `read`/`write`/`edit`/`grep`/`find`/`ls` plus `glob`,
+  `truncate`, guarded file-only `delete`/`move`, and registry-generic
+  `tool_search`. `web_fetch` is deliberately **not registered by default**:
+  callers may pass `enableWebFetch: true` to `bootDemo` when they explicitly
+  accept that browser-direct targets need permissive CORS and that fetched
+  pages are an untrusted prompt-injection surface. There is no settings UI
+  for this flag yet. fen's kv-backed seams (sessions,
   `fs_kv`) call kv synchronously, so the shell mirrors IndexedDB into a
   `SyncKvCache` (`packages/bindings`) at boot — see
   [../bindings/kv.md](../bindings/kv.md). The cache's asynchronous write-back

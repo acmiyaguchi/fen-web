@@ -31,8 +31,10 @@ export interface DemoBootOptions {
   provider?: string;
   /** Model id; defaults to the provider's default when omitted. */
   model?: string;
-  /** Virtual-FS working directory the agent operates in. */
+  /** Virtual-FS working directory/session metadata. */
   cwd?: string;
+  /** Deliberately opt in to the untrusted, CORS-limited web_fetch tool. */
+  enableWebFetch?: boolean;
 }
 
 /** Host primitives + bundled VM sources bootDemo needs, injected so the
@@ -214,6 +216,9 @@ export async function bootDemo(
       cwd: opts.cwd ?? "/workspace",
       provider,
       model: opts.model,
+      // Fennel boot reads this kebab-case key; false is explicit so a
+      // missing UI option can never accidentally enable web_fetch.
+      "enable-web-fetch": opts.enableWebFetch === true,
     });
 
     pump = await rt.createCoroutinePump(

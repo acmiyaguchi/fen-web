@@ -14,6 +14,7 @@
 (local vfs (require :fen_web.tools.vfs))
 (local globmod (require :fen_web.tools.glob))
 (local truncate (require :fen_web.tools.truncate))
+(local path-ops (require :fen_web.tools.path_ops))
 
 (fn filter-by-glob [all pattern ?yield-fn]
   (let [out []]
@@ -77,14 +78,17 @@
     (util.maybe-yield ?yield-fn)
     stopped?))
 
-(fn run-grep [{: pattern : path : glob : ignore_case : literal : context : limit} _ctx ?yield-fn]
+(fn run-grep [{: pattern : path : glob : ignore_case : literal : context : limit} ctx ?yield-fn]
   (if (or (not pattern) (= pattern ""))
       (util.err "missing 'pattern'")
       (let [kv (util.get-kv)
-            target (or path ".")
+            raw-target (or path ".")
+            (target perr) (path-ops.resolve-path raw-target ctx)
             cap (util.int-arg limit 200)
-            context-n (or (util.int-arg context nil) 0)
-            (single-content _read-err) (vfs.read-file kv target)]
+            context-n (or (util.int-arg context nil) 0)]
+        (if perr
+            (util.err perr)
+            (let [(single-content _read-err) (vfs.read-file kv target)]
         (if single-content
             (let [(norm _) (vfs.normalize target)
                   lines (util.split-lines single-content)
@@ -109,7 +113,7 @@
                             (when (> (length matches) 0)
                               (set stopped? (emit-file p lines matches context-n out cap ?yield-fn)))))))
                     (let [(capped _) (truncate.truncate-head (table.concat out "\n") nil ?yield-fn)]
-                      (util.ok capped)))))))))
+                      (util.ok capped)))))))))))
 
 {:name :grep
  :label "Grep"

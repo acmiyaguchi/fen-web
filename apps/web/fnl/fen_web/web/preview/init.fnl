@@ -28,6 +28,7 @@
 ;; expressions.
 
 (local util (require :fen_web.tools.util))
+(local path-ops (require :fen_web.tools.path_ops))
 (local html (require :fen_web.web.preview.html))
 (local json (require :fen.util.json))
 
@@ -149,17 +150,20 @@
    :parameters {:type :object
                 :properties {:entry {:type :string
                                      :description "Entry HTML path in the workspace (default /index.html)"}}}
-   :execute (fn [args _ctx _yield]
+   :execute (fn [args ctx _yield]
               (let [kv (util.get-kv)
-                    entry (if (and args.entry (not= args.entry "")) args.entry "/index.html")
-                    (page found?) (html.build-page kv entry)
+                    raw-entry (if (and args.entry (not= args.entry "")) args.entry "/index.html")
+                    (entry perr) (path-ops.resolve-path raw-entry ctx)
                     host (get-host)]
-                (host.preview_set_html page)
-                (util.ok (if found?
-                             (.. "preview refreshed from " entry
-                                 " (" (tostring (length page)) " bytes)")
-                             (.. "preview refreshed, but no entry file at " entry
-                                 " — showing a placeholder page")))))})
+                (if perr
+                    (util.err perr)
+                    (let [(page found?) (html.build-page kv entry)]
+                      (host.preview_set_html page)
+                      (util.ok (if found?
+                                   (.. "preview refreshed from " entry
+                                       " (" (tostring (length page)) " bytes)")
+                                   (.. "preview refreshed, but no entry file at " entry
+                                       " — showing a placeholder page")))))))})
 
 (local query-tool
   {:name :preview_query
@@ -247,22 +251,29 @@
 (local tool-specs
   [refresh-tool query-tool click-tool fill-tool eval-tool screenshot-tool console-tool])
 
-;; Build a fresh spec table with :always exposure rather than mutating the
-;; shared module-level singleton in tool-specs (which register would otherwise
-;; re-mutate on every call / hot-reload).
-(fn with-always-exposure [spec]
+;; Build a fresh spec table with specialized :search exposure rather than
+;; mutating the shared module-level singleton in tool-specs (which register
+;; would otherwise re-mutate on every call / hot-reload). preview_console, if
+;; added to this toolset, remains :always as the debugging lifeline.
+(fn with-exposure [spec]
   (let [s (collect [k v (pairs spec)] k v)]
-    (set s.exposure :always)
+    ;; preview_refresh stays :always too: it is the entry point the system
+    ;; prompt names — a provider can only call tools whose schemas are in
+    ;; the request, and the render step must not require a tool_search hop.
+    (set s.exposure
+         (if (or (= spec.name :preview_console) (= spec.name :preview_refresh))
+             :always
+             :search))
     s))
 
 ;; @doc fen_web.web.preview.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the demo-only preview_refresh/query/click/fill/eval/screenshot/console tools through the per-owner :tool register kind, with :always exposure so the agent can drive its freshly built app without a tool_search gate. Registers fresh spec tables so the shared module-level specs are never mutated.
+;; summary: Register the demo-only preview_refresh/query/click/fill/eval/screenshot/console tools through the per-owner :tool register kind. preview_refresh and preview_console are :always (the system-prompt entry point and the debugging lifeline); the rest are :search, discoverable via tool_search. Registers fresh spec tables so the shared module-level specs are never mutated.
 ;; tags: preview tools register extension
 (fn M.register [api]
   (each [_ spec (ipairs tool-specs)]
-    (api.register :tool (with-always-exposure spec)))
+    (api.register :tool (with-exposure spec)))
   true)
 
 M

@@ -13,6 +13,7 @@
 (local DEFAULT-MAX-LINES 2000)
 (local DEFAULT-MAX-BYTES (* 50 1024))
 (local LINES-BEFORE-YIELD 512)
+(local util (require :fen_web.tools.util))
 
 (fn maybe-yield [?yield-fn]
   (when ?yield-fn (?yield-fn)))
@@ -61,12 +62,48 @@
             (when (and ?yield-fn (>= scanned LINES-BEFORE-YIELD))
               (set scanned 0)
               (?yield-fn)))
-          (let [content (table.concat out "\n")
+          (let [content (if (> lines 0)
+                            (table.concat out "\n")
+                            ;; A single line longer than max-bytes has no
+                            ;; complete line that fits. Keep a byte-exact head
+                            ;; rather than returning only the tag.
+                            (string.sub s 1 max-bytes))
                 tag (string.format "[truncated: kept head %d/%d lines, %s/%s]"
                                     lines total-lines (fmt-kb (length content))
                                     (fmt-kb total-bytes))]
             (values (.. content "\n" tag) true))))))
 
+;; @doc fen_web.tools.truncate.execute
+;; kind: function
+;; signature: (execute args ctx? yield-fn?) -> AgentToolResult
+;; summary: Truncate caller-supplied text to a bounded head without spilling to a local file.
+;; tags: tools output truncate execute
+(fn run-truncate [args _ctx ?yield-fn]
+  (let [text args.text
+        max-lines args.max_lines
+        max-bytes args.max_bytes]
+    (if (= text nil)
+        (util.err "missing 'text'")
+        (let [(out _) (truncate-head text
+                                     {:max-lines (util.int-arg max-lines DEFAULT-MAX-LINES)
+                                      :max-bytes (util.int-arg max-bytes DEFAULT-MAX-BYTES)}
+                                     ?yield-fn)]
+          (util.ok out)))))
+
 {: DEFAULT-MAX-LINES
  : DEFAULT-MAX-BYTES
- : truncate-head}
+ : truncate-head
+ :name :truncate
+ :label "Truncate"
+ :snippet "Bound text output"
+ :description "Keep the head of text within max_lines/max_bytes. The browser has no spill file; truncated output is marked and the omitted tail cannot be recovered from this call."
+ :parameters {:type :object
+              :properties {:text {:type :string :description "Text to truncate"}
+                           :max_lines {:type :integer
+                                       :minimum 1
+                                       :description "Maximum output lines (default 2000)"}
+                           :max_bytes {:type :integer
+                                       :minimum 1
+                                       :description "Maximum output bytes (default 50KB)"}}
+              :required [:text]}
+ :execute run-truncate}
