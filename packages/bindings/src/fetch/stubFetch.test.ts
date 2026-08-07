@@ -16,7 +16,9 @@ test("ScriptedFetch delivers chunks in order via onChunk", async () => {
   const result = await stub.fetch({
     method: "GET",
     url: "https://example.com",
-    onChunk: (bytes) => received.push(bytes),
+    onChunk: (bytes) => {
+      received.push(bytes);
+    },
   });
 
   assert.deepEqual(received, ["hello ", "world"]);
@@ -43,6 +45,46 @@ test("ScriptedFetch hang produces {error} after timeoutMs", async () => {
   assert.ok(elapsed >= 15, `expected to wait roughly timeoutMs, waited ${elapsed}ms`);
 });
 
+test("ScriptedFetch applies an idle timeout before a delayed chunk", async () => {
+  const stub = new ScriptedFetch();
+  stub.enqueue({ status: 200, chunks: ["late"], delayMs: 20 });
+
+  const received: string[] = [];
+  const result = await stub.fetch({
+    method: "GET",
+    url: "https://example.com",
+    idleTimeoutMs: 5,
+    onChunk: (bytes) => {
+      received.push(bytes);
+    },
+  });
+
+  assert.deepEqual(result, { error: "idle timeout" });
+  assert.deepEqual(received, []);
+});
+
+test("ScriptedFetch can abort after delivering a chunk", async () => {
+  const stub = new ScriptedFetch();
+  stub.enqueue({
+    status: 200,
+    chunks: ["before abort", "never delivered"],
+    abortAfterChunks: 1,
+    abortMessage: "stream aborted",
+  });
+
+  const received: string[] = [];
+  const result = await stub.fetch({
+    method: "GET",
+    url: "https://example.com",
+    onChunk: (bytes) => {
+      received.push(bytes);
+    },
+  });
+
+  assert.deepEqual(result, { error: "stream aborted" });
+  assert.deepEqual(received, ["before abort"]);
+});
+
 test("binary bytes survive round-trip through toLuaBytes/fromLuaBytes", async () => {
   const original = new Uint8Array([0, 1, 2, 255, 254, 128, 10, 13, 0]);
   const stub = new ScriptedFetch();
@@ -52,7 +94,9 @@ test("binary bytes survive round-trip through toLuaBytes/fromLuaBytes", async ()
   const result = await stub.fetch({
     method: "GET",
     url: "https://example.com",
-    onChunk: (bytes) => chunks.push(bytes),
+    onChunk: (bytes) => {
+      chunks.push(bytes);
+    },
   });
 
   assert.equal(chunks.length, 1);

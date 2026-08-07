@@ -207,6 +207,10 @@ export async function bootDemo(
       console.error("fen-web demo: fatal-error flush failed", flushErr);
     }
     try {
+      // No request can be in flight before the first pump, but keep every
+      // close path on the same teardown discipline: release the poller
+      // before the VM.
+      poller.disposeAll();
       rt.close();
     } catch (closeErr) {
       console.error("fen-web demo: failed to close after boot error", closeErr);
@@ -242,6 +246,10 @@ export async function bootDemo(
     if (closePromise) return closePromise;
     closed = true;
     closePromise = (async () => {
+      // Abort fetch producers before closing the VM. A producer may be
+      // suspended awaiting poller backpressure and otherwise never reach its
+      // WebHostFetch finally block (reader.cancel/releaseLock).
+      poller.disposeAll();
       try {
         rt.close();
       } catch (closeErr) {

@@ -24,8 +24,9 @@ export interface FetchRequestOptions {
   idleTimeoutMs?: number;
   /** Streaming sink. Called with each chunk of the response body as a
    * Lua-compatible byte string (see toLuaBytes for why). Optional — when
-   * omitted, only the accumulated body is returned. */
-  onChunk?: (bytes: string) => void;
+   * omitted, only the accumulated body is returned. A promise may be
+   * returned to apply backpressure to a poll-based consumer. */
+  onChunk?: (bytes: string) => void | PromiseLike<void>;
   /** Mirrors fen's :accumulate-body? (default true). When false, the
    * transport still streams every chunk through onChunk but only retains
    * a bounded head (ACCUMULATE_BODY_CAP bytes) of the body for error
@@ -44,10 +45,10 @@ export const ACCUMULATE_BODY_CAP = 65536;
 export interface FetchSuccess {
   status: number;
   headers: Record<string, string>;
-  /** Full accumulated body. Present unless the caller only wanted the
-   * streamed chunks (the TS layer always accumulates; policy about
-   * whether to keep it lives in Fennel, matching accumulate-body?). */
-  body?: string;
+  /** Full body when accumulateBody is true, or a bounded diagnostic head
+   * when it is false. The transport owns this copy; the Fennel poll loop
+   * forwards it instead of rebuilding it from streamed chunks. */
+  body: string;
 }
 
 export interface FetchFailure {
@@ -62,8 +63,8 @@ export function isFetchFailure(r: FetchResult): r is FetchFailure {
 
 /** The host.fetch primitive: promise-based on the JS side. The runtime
  * package (wasmoon bridge) owns resuming the Lua coroutine when this
- * promise settles or when onChunk fires — this package only provides the
- * transport. */
+ * promise settles; onChunk is a transport sink and may be awaited for
+ * poll-queue backpressure. This package never resumes Lua directly. */
 export interface HostFetch {
   fetch(opts: FetchRequestOptions): Promise<FetchResult>;
 }

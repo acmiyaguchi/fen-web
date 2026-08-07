@@ -83,6 +83,64 @@ test("coroutine bridge: JS resumes a Lua coroutine across 3+ async chunks with n
   }
 });
 
+test("CoroutinePump polls a parked producer only after a microtask flush", async () => {
+  const rt = await createFenRuntime({ sources: new Map() });
+  const produced = ["chunk-1", "chunk-2", "chunk-3"];
+  const queue: string[] = [];
+  let producerParked = false;
+  let producerDone = false;
+  let releaseProducer: (() => void) | undefined;
+
+  rt.lua.global.set("__fen_test_fetch_start", () => {
+    void (async () => {
+      for (const chunk of produced) {
+        if (queue.length >= 2) {
+          producerParked = true;
+          await new Promise<void>((resolve) => {
+            releaseProducer = resolve;
+          });
+        }
+        queue.push(chunk);
+      }
+      producerDone = true;
+    })();
+    return 1;
+  });
+  rt.lua.global.set("__fen_test_fetch_poll", () => {
+    const chunks = queue.splice(0);
+    const release = releaseProducer;
+    releaseProducer = undefined;
+    release?.();
+    return { chunks, done: producerDone };
+  });
+
+  try {
+    const co = await rt.createCoroutinePump(`
+      function()
+        local id = __fen_test_fetch_start()
+        local received = {}
+        while true do
+          local p = __fen_test_fetch_poll(id)
+          for _, chunk in ipairs(p.chunks) do table.insert(received, chunk) end
+          if p.done then return received end
+          coroutine.yield()
+        end
+      end
+    `);
+
+    // The first resume drains the bounded queue and releases the producer.
+    // Its continuation is a JS microtask, so one Lua poll must finish before
+    // the producer can make the final chunk visible.
+    assert.equal(await co.pump(), "suspended");
+    assert.equal(producerParked, true);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    assert.equal(await co.pump(), "dead");
+    assert.deepEqual(await co.result(), produced);
+  } finally {
+    rt.close();
+  }
+});
+
 /**
  * Negative control for the spike above: proves the C-call-boundary
  * hazard the poll design exists to avoid is a real Lua VM constraint,

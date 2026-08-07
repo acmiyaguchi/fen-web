@@ -31,7 +31,10 @@ is start/poll:
 
 `fetch_start` kicks off a promise-based fetch and returns an id
 immediately (non-blocking). `fetch_poll` drains buffered chunks and
-reports terminal state once the promise settles. Between polls, the
+reports terminal state once the promise settles AND every buffered chunk
+(including any producer parked on backpressure) has been drained — `done`
+is withheld while chunks remain, so a poll loop that exits on `done` can
+never strand data. Between polls, the
 Fennel loop calls `opts.yield` (`coroutine.yield`) so the VM cooperates
 instead of busy-looping a single Lua call — the backend requires
 `opts.yield` and errors if it's absent (no blocking-mode fallback; see
@@ -56,6 +59,12 @@ without it, `FetchPoller`'s internal map grows by one entry per HTTP call
 for the life of the VM, since request ids are never reused. The runtime
 package wires `fetch_start`/`fetch_poll`/`fetch_dispose` to a shared
 `FetchPoller` instance's `start`/`poll`/`dispose` methods, in that order.
+
+`dispose` (and the poller-level `disposeAll()`, the VM-teardown seam
+called before `rt.close()`) also releases any producer parked on a
+backpressure promise by rejecting it with `FetchPollerDisposedError`
+(`code: "FETCH_POLLER_DISPOSED"`), so the host's `finally` runs and the
+underlying reader/connection is cancelled rather than leaked.
 
 ## Byte and latin1 discipline
 
