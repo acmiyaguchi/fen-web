@@ -42,7 +42,7 @@ const bindingsFnl = path.resolve(repoRoot, "packages", "bindings", "fnl");
 const platformFnl = path.resolve(repoRoot, "packages", "platform", "fnl");
 const demoFnl = path.resolve(here, "..", "fnl");
 
-const KEY = "test-key";
+const KEY = "sk-ant-api03-test-key-material";
 const REPLY = "Hello from Claude";
 
 function buildSources(): Map<string, FenSource> {
@@ -332,6 +332,29 @@ function statusText(dom: FakeDom): string {
     .join(" ");
 }
 
+/** Find a JSON object anywhere in a provider request without coupling the
+ * test to Anthropic's exact message nesting. */
+function findWireObject(
+  value: unknown,
+  predicate: (record: Record<string, unknown>) => boolean,
+): Record<string, unknown> | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findWireObject(item, predicate);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (value === null || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (predicate(record)) return record;
+  for (const child of Object.values(record)) {
+    const found = findWireObject(child, predicate);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 test("boot host exposes preview_rpc_poll values as JSON text", () => {
   const preview = new FakePreview(() => ({ ok: true, value: { clicked: true } }));
   const hostTable = buildDemoHostTable(
@@ -382,7 +405,9 @@ test("bootDemo exposes agent_state without returning the stored API key", async 
   scripted.enqueue({
     status: 200,
     headers: { "content-type": "text/event-stream" },
-    chunks: anthropicToolUseSse("agent_state", "state-1", { query: "(:get)" }),
+    chunks: anthropicToolUseSse("agent_state", "state-1", {
+      query: "(:get :messages 0 :content)",
+    }),
   });
   scripted.enqueue({
     status: 200,
@@ -429,7 +454,10 @@ test("bootDemo exposes agent_state without returning the stored API key", async 
 
   await drainTasks(tasks, () => dom.exists("fen-input"));
   assert.ok(dom.exists("fen-input"), "presenter should boot before the tool call");
-  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "inspect state" } as DomOp]);
+  // Put the credential in a user message, which is one of the surfaces the
+  // companion actually reads. The test must prove that the successful tool
+  // result contains a replacement, not merely that an error omitted a key.
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: `inspect state ${KEY}` } as DomOp]);
   dom.emit("fen-inputbar", "submit");
   await drainTasks(tasks, () => recorder.requests.length >= 2 || fatal !== undefined);
 
@@ -437,14 +465,26 @@ test("bootDemo exposes agent_state without returning the stored API key", async 
   assert.equal(recorder.requests.length, 2, "agent_state should produce one follow-up provider request");
   const followUpBody = recorder.requests[1].body ?? "";
   assert.match(followUpBody, /agent_state/);
+  const followUp = JSON.parse(followUpBody) as unknown;
+  const toolResult = findWireObject(
+    followUp,
+    (record) => record.type === "tool_result" && record.tool_use_id === "state-1",
+  );
+  assert.ok(toolResult, "the agent_state result must be present in the follow-up request");
+  // Anthropic omits is_error for a successful result; treating omission as
+  // false makes the semantic assertion explicit while still matching wire
+  // conventions. An actual tool failure has is_error: true and fails here.
+  assert.equal(toolResult.is_error ?? false, false, "agent_state tool call must succeed");
+  const returnedToolText = JSON.stringify(toolResult.content);
+  assert.match(returnedToolText, /\[redacted\]/, "the returned state must visibly redact the key");
   assert.equal(
-    followUpBody.includes(KEY),
+    returnedToolText.includes(KEY),
     false,
     "the API key stored in IndexedDB must not be readable through agent_state",
   );
-  assert.equal(followUpBody.includes(otherStoredKey), false);
-  assert.equal(followUpBody.includes(oauthAccess), false);
-  assert.equal(followUpBody.includes(oauthRefresh), false);
+  assert.equal(returnedToolText.includes(otherStoredKey), false);
+  assert.equal(returnedToolText.includes(oauthAccess), false);
+  assert.equal(returnedToolText.includes(oauthRefresh), false);
   assert.equal(diagnostics.snapshot().includes(KEY), false, "diagnostics must also scrub the stored key");
 
   let stopped = false;

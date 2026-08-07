@@ -284,15 +284,15 @@ tool-result data. In particular, the `env/apikey/<VAR>` value used by
 the browser diagnostics `addSecret` list continues to scrub the same value
 from reports and bus/fetch summaries.
 
-State scope is **per session**, not global. Canonical conversation messages
-are appended by the existing `fen.session_lifecycle` flush bridge to the
-active `:kv` session, and the KV backend also supports extension-state
-entries for stateful companions. Resume selects that session and restores
-its messages and extension-owned state; `/new` starts an independent state
-history. The agent-state companion itself has no mutable durable payload,
-so its `:session` view reports the current per-session identity rather than
-creating a global browser state store. All writes still go through the
-existing synchronous KV cache and browser flush path.
+**Persistence scope decision:** the GOAL.md request to persist companion state
+is explicitly scoped out of #87. The read-only agent-state companion owns no
+mutable durable payload, so this web integration does not add extension-state
+writes, restore hooks, or a global browser state store. Its `:session` view
+reports the current session identity, while the existing session lifecycle
+continues to persist ordinary conversation messages. This is a deliberate
+read-only-companion boundary, not an implementation of per-session or global
+agent-state persistence; any future stateful companion must choose and test
+its own persistence scope.
 
 - **#41 — workspace visibility (implemented).** The shell-owned panel in
   `src/workspacePanel.ts` reads the durable `fs:` keyspace directly through a
