@@ -27,6 +27,12 @@ export class WebHostFetch implements HostFetch {
   async fetch(opts: FetchRequestOptions): Promise<FetchResult> {
     const controller = new AbortController();
     let abortReason: string | undefined;
+    // FetchPoller installs this before fetch() starts. Keep the registration
+    // optional so direct HostFetch callers and other hosts are unaffected.
+    opts.registerAbort?.(() => {
+      abortReason = "cancelled";
+      controller.abort();
+    });
 
     let overallTimer: ReturnType<typeof setTimeout> | undefined;
     if (opts.timeoutMs && opts.timeoutMs > 0) {

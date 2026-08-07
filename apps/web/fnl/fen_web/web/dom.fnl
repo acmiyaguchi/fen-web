@@ -129,6 +129,26 @@
                 :attrs [{:name :type :value :submit}]}]}
    {:id :fen-overlay :tag :div :class :fen-overlay}])
 
+(fn turn-busy? []
+  (let [ctx state.presenter-ctx]
+    (and ctx ctx.is-busy? (ctx.is-busy?))))
+
+(fn input-vnodes []
+  (let [out [{:id :fen-input :tag :input :class :fen-input
+              :attrs [{:name :type :value :text}
+                      {:name :placeholder
+                       :value "Message fen…  (Enter to send)"}
+                      {:name :autocomplete :value :off}]}
+             {:id :fen-send :tag :button :class :fen-send :text "Send"
+              :attrs [{:name :type :value :submit}]}]]
+    (when (turn-busy?)
+      (table.insert out
+                    {:id :fen-stop :tag :button :class :fen-stop :text "Stop"
+                     :attrs [{:name :type :value :button}
+                             {:name "data-fen-stop" :value "true"}]
+                     :listen [:click]}))
+    out))
+
 ;; @doc fen_web.web.dom.ensure-skeleton!
 ;; kind: function
 ;; signature: (ensure-skeleton!) -> nil
@@ -176,6 +196,7 @@
                            (status-vnodes "fen-sl-" fragment.status-left) ops)
     (M.reconcile-children! :fen-status-right
                            (status-vnodes "fen-sr-" fragment.status-right) ops)
+    (M.reconcile-children! :fen-inputbar (input-vnodes) ops)
     (M.reconcile-children! :fen-transcript transcript ops)
     (M.reconcile-children! :fen-panels (panels-vnodes fragment.panels) ops)
     (when (and grew? (not state.select) (not state.prompt))
@@ -226,7 +247,10 @@
   (each [_ ev (ipairs (drain-events!))]
     (let [id (tostring (or ev.id ""))
           etype (tostring (or ev.event ""))]
-      (if (and state.prompt (not state.prompt.done?)
+      (if (and (= id "fen-stop") (= etype :click))
+          (when ctx.request-cancel (ctx.request-cancel))
+
+          (and state.prompt (not state.prompt.done?)
                (= id "fen-prompt-form") (= etype :submit))
           (resolve-prompt! (input-value :fen-prompt-input))
 
@@ -282,8 +306,16 @@
                {:id :fen-prompt-submit :tag :button :class :overlay-submit
                 :text "OK" :attrs [{:name :type :value :submit}]}]}])
 
+(fn cancellation-requested? []
+  (let [ctx state.presenter-ctx]
+    (and ctx ctx.state ctx.state.cancel-requested?)))
+
 (fn await-overlay! [get-done?]
-  (while (not (get-done?)) (coroutine.yield)))
+  ;; A Stop/Esc can arrive while a tool is waiting on a modal prompt/select.
+  ;; Let that cooperative turn unwind rather than leaving the overlay parked
+  ;; forever waiting for a user response that cancellation has superseded.
+  (while (and (not (get-done?)) (not (cancellation-requested?)))
+    (coroutine.yield)))
 
 ;; @doc fen_web.web.dom.select
 ;; kind: function

@@ -25,6 +25,25 @@ test.describe("browser happy path", () => {
 
     await router.assertComplete();
   });
+
+  test("stops a delayed provider turn and accepts a follow-up turn", async ({ page }) => {
+    const router = new ScriptedAnthropicRouter(page, "cancel.json");
+    await router.install();
+    await startWithFakeKey(page);
+
+    await submitPrompt(page, "Stop the runaway turn.");
+    await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+    await page.getByRole("button", { name: "Stop", exact: true }).click();
+
+    await expectTranscript(page, "cancelled");
+    await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
+
+    await submitPrompt(page, "Work after cancellation.");
+    await expectTranscript(page, "The follow-up turn worked.");
+    await router.assertComplete();
+  });
 });
 
 test("sends a non-ASCII user prompt as valid JSON to the scripted provider", async ({ page }) => {

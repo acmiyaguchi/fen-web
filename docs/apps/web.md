@@ -53,6 +53,18 @@ Token totals live in the presenter's in-memory state for the current runtime
 session only. They are not persisted to the virtual filesystem. A browser
 **Restart** creates a fresh VM/session, so the totals reset; `/reload` within
 the same runtime retains presenter state.
+
+### Stop / cancellation
+
+While a turn is running, the input bar adds a **Stop** button. Pressing
+**Escape** is equivalent. Both paths call the JS `DemoSession.cancel()` seam,
+which asks the in-VM presenter to cancel cooperatively and immediately aborts
+every active `host.fetch` request; they do not tear down the VM. The presenter
+then emits fen's canonical `:cancelled` lifecycle event, keeps streamed
+transcript rows, and returns to the idle state so another prompt can be sent.
+Stopping while idle is a no-op. If the run loop crashes or the VM is closed,
+its fetch poller aborts all remaining transports before closing the runtime.
+
 - **#7 — shell + BYO-key settings (implemented).** The single-page shell
   (`apps/web/index.html` + `apps/web/src/*.ts`, bundled by Vite) wires
   the runtime + bindings + DOM presenter into a working page and runs the

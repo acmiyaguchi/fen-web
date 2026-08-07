@@ -27,6 +27,7 @@ interface FetchRequestOptions {
   timeoutMs?: number; connectTimeoutMs?: number; idleTimeoutMs?: number;
   onChunk?: (text: string) => void | PromiseLike<void>;
   accumulateBody?: boolean;  // default true; false retains only a UTF-8-byte-capped head
+  registerAbort?: (abort: () => void) => void;  // optional transport cancellation registration
 }
 const ACCUMULATE_BODY_CAP = 65536;  // mirrors native FEN_ERROR_BODY_CAP
 type FetchResult = { status: number; headers: Record<string,string>; body: string }
@@ -150,6 +151,28 @@ host-keyed special-case is deleted. Covered by
 `packages/bindings/tests/fetch_test.fnl`.
 
 ## Poll protocol and cooperative-only mode
+
+### Mid-request cancellation
+
+`FetchPoller.abort(id)` is exposed to the host as `__fen_host.fetch_abort(id)`.
+It invokes the optional `registerAbort` callback supplied to that request (the
+browser transport registers its `AbortController.abort()`), marks the poll
+state terminal with `{error: "cancelled"}`, and leaves the state available for
+one final poll. The Fennel backend disposes that id and yields the cancellation
+through fen's cooperative agent seam, so a stopped turn emits `:cancelled`
+instead of an ordinary provider error. `abortAll()` is used by the page's
+`DemoSession.cancel()` path; `disposeAll()` also aborts in-flight transports
+before VM close or fatal cleanup. `ScriptedFetch` implements the same optional
+registration for node and browser-test parity.
+
+The host table includes:
+
+```text
+fetch_abort(id) -> nil
+```
+
+Unknown ids are harmless. Calling it while idle is a no-op because there are
+no live poll states.
 
 `fetch_poll` terminal results carry response headers as `headers-json`,
 host-owned JSON text serialized by the JS host. This is the same hard

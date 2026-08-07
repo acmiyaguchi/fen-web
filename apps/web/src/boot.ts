@@ -86,6 +86,10 @@ export interface DemoRuntimeDeps {
 export interface DemoSession {
   /** Await pending kv write-backs (session persistence durability). */
   flush(): Promise<void>;
+  /** Request cancellation of the active turn without tearing down the VM.
+   * No-op when the presenter is idle; the next frame resumes the cooperative
+   * turn so it emits :cancelled and leaves the session usable. */
+  cancel(): void;
   /** Cooperatively tear down: ask the presenter run loop to quit at the next
    * frame so presenter shutdown, session close, and the :agent-shutdown
    * lifecycle event all run, then close the VM. Resolves once torn down. */
@@ -171,6 +175,11 @@ export function buildDemoHostTable(
       };
     },
     fetch_dispose: (id: number) => poller.dispose(id),
+    // Mid-turn cancellation keeps the poll state long enough for Lua to see
+    // the terminal {error: "cancelled"}; the next Fennel terminal branch
+    // calls fetch_dispose. VM teardown instead uses disposeAll(), which also
+    // aborts the transport before closing wasmoon.
+    fetch_abort: (id: number) => poller.abort(id),
     // host.preview: setHtml (preview_refresh) + the async postMessage RPC
     // bridge (preview_query/click/fill/eval/screenshot). Mirrors the
     // fetch start/poll/dispose shape so the Fennel tools yield between
@@ -313,6 +322,23 @@ export async function bootDemo(
     return closePromise;
   };
 
+  /** Cancel the active turn and abort every request currently owned by the
+   * shared poller. The Fennel hook is called first so the cooperative agent's
+   * next yield raises its canonical cancellation marker; aborting the HTTP
+   * layer then wakes a coroutine parked inside fetch immediately. */
+  const cancel = (): void => {
+    if (closed) return;
+    try {
+      const requestCancel = rt.lua.global.get("__fen_demo_request_cancel") as unknown;
+      if (typeof requestCancel === "function") (requestCancel as () => unknown)();
+    } catch (err) {
+      // Cancellation is best effort at the Lua hook; still abort the host
+      // requests so a stalled transport cannot outlive the user's action.
+      console.error("fen-web demo: cooperative cancel hook failed", err);
+    }
+    poller.abortAll();
+  };
+
   // Drive the presenter loop one resume per animation frame: each pump()
   // runs one presenter frame (drain input, tick any in-flight turn, render
   // the diff, yield). rAF paces to the display and pauses on a hidden tab;
@@ -359,6 +385,7 @@ export async function bootDemo(
 
   return {
     flush: () => deps.flush?.() ?? Promise.resolve(),
+    cancel,
     stop: () => {
       if (closed) return closePromise ?? Promise.resolve();
       return new Promise<void>((resolve) => {

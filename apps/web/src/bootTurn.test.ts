@@ -586,6 +586,140 @@ test("bootDemo drives one OpenAI Chat Completions turn browser-direct", async ()
   assert.ok(stopped, "session.stop() should resolve after the OpenAI turn");
 });
 
+test("bootDemo cancels an in-flight stream, preserves partial output, and accepts the next turn", async () => {
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicSse("partial answer"),
+    hangAfterChunks: 3,
+  });
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicSse("after cancellation"),
+  });
+  const recorder = recordingFetch(scripted);
+  const dom = new FakeDom("fen-app");
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  let fatal: unknown;
+  const session = await bootDemo(
+    { provider: "anthropic", model: "claude-haiku-4-5" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(),
+      dom,
+      preview: new FakePreview(),
+      fetch: recorder.fetch,
+      schedule,
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "stop this turn" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await drainTasks(tasks, () => recorder.requests.length >= 1);
+  assert.equal(recorder.requests.length, 1, "cancel test should have one in-flight request");
+
+  session.cancel();
+  await drainTasks(tasks, () => transcriptText(dom).includes("cancelled"));
+  const cancelledTranscript = transcriptText(dom);
+  assert.match(cancelledTranscript, /partial/);
+  assert.match(cancelledTranscript, /cancelled/);
+  assert.equal(scripted.aborted, true, "cancel must reach ScriptedFetch's abort seam");
+  assert.equal(fatal, undefined, "cooperative cancellation must not report a fatal error");
+
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "work after cancel" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await drainTasks(tasks, () => transcriptText(dom).includes("after cancellation"));
+  assert.equal(recorder.requests.length, 2, "a fresh turn should work immediately after cancellation");
+  assert.equal(fatal, undefined);
+
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await drainTasks(tasks, () => stopped);
+  await stopPromise;
+  assert.ok(stopped);
+});
+
+test("bootDemo.cancel is a no-op while idle", async () => {
+  const scripted = new ScriptedFetch();
+  const dom = new FakeDom("fen-app");
+  const tasks: (() => void)[] = [];
+  const session = await bootDemo(
+    { provider: "anthropic" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(),
+      dom,
+      preview: new FakePreview(),
+      fetch: scripted,
+      schedule: (fn) => void tasks.push(fn),
+    },
+  );
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  session.cancel();
+  assert.equal(scripted.abortCount, 0);
+  assert.equal(transcriptText(dom).includes("cancelled"), false);
+
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await drainTasks(tasks, () => stopped);
+  await stopPromise;
+  assert.ok(stopped);
+});
+
+test("run-loop crash aborts an in-flight fetch before fatal reporting", async () => {
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicSse("crash partial"),
+    hangAfterChunks: 3,
+  });
+  const dom = new FakeDom("fen-app");
+  const tasks: (() => void)[] = [];
+  let scheduleCalls = 0;
+  let fatal: unknown;
+  const session = await bootDemo(
+    { provider: "anthropic" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(),
+      dom,
+      preview: new FakePreview(),
+      fetch: scripted,
+      schedule: (fn) => {
+        scheduleCalls += 1;
+        if (scheduleCalls >= 3) throw new Error("in-flight scheduler crash");
+        tasks.push(fn);
+      },
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "crash" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await drainTasks(tasks, () => fatal !== undefined);
+  assert.match(String(fatal), /in-flight scheduler crash/);
+  assert.equal(scripted.aborted, true, "fatal teardown must abort the HTTP transport");
+  await session.stop();
+});
+
 test("bootDemo preserves an HTTP 429 provider error in the transcript and diagnostics", async () => {
   const scripted = new ScriptedFetch();
   enqueueProviderRetries(scripted, {

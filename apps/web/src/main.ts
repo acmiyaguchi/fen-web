@@ -175,6 +175,31 @@ async function main(): Promise<void> {
   let bootGeneration = 0;
   const STOP_TIMEOUT_MS = 3000;
 
+  // Stop is rendered by the busy-gated Fennel DOM model, but the click and
+  // Escape paths deliberately terminate in the shell: DemoSession.cancel()
+  // calls the staged __fen_demo_request_cancel hook and aborts every live
+  // fetch-poller request immediately. The presenter also drains the button
+  // event on its next frame, making the DOM seam testable without bypassing
+  // the normal cooperative lifecycle.
+  const cancelActiveTurn = (): void => {
+    session?.cancel();
+  };
+  appMount.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const stop = target.closest<HTMLElement>("[data-fen-stop]");
+    if (!stop) return;
+    event.preventDefault();
+    event.stopPropagation();
+    cancelActiveTurn();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (!session) return;
+    event.preventDefault();
+    cancelActiveTurn();
+  });
+
   const updateRestartButton = (): void => {
     if (!restartButton) return;
     if (restarting) {

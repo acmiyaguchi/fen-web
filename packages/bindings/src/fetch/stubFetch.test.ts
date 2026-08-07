@@ -45,6 +45,24 @@ test("ScriptedFetch hang produces {error} after timeoutMs", async () => {
   assert.ok(elapsed >= 15, `expected to wait roughly timeoutMs, waited ${elapsed}ms`);
 });
 
+test("ScriptedFetch observes a poller abort and exits a hanging stream", async () => {
+  const stub = new ScriptedFetch();
+  stub.enqueue({ status: 200, chunks: ["first", "never"], hangAfterChunks: 1 });
+  let abort!: () => void;
+  const pending = stub.fetch({
+    method: "GET",
+    url: "https://example.com",
+    registerAbort: (fn) => {
+      abort = fn;
+    },
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  abort();
+  assert.deepEqual(await pending, { error: "cancelled" });
+  assert.equal(stub.abortCount, 1);
+});
+
 test("ScriptedFetch applies an idle timeout before a delayed chunk", async () => {
   const stub = new ScriptedFetch();
   stub.enqueue({ status: 200, chunks: ["late"], delayMs: 20 });

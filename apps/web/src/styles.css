@@ -273,8 +273,8 @@ body {
   font: inherit;
 }
 
-.fen-send {
-  background: var(--accent);
+.fen-send,
+.fen-stop {
   color: #0b0e13;
   border: none;
   border-radius: 4px;
@@ -282,6 +282,14 @@ body {
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+
+.fen-send {
+  background: var(--accent);
+}
+
+.fen-stop {
+  background: var(--error);
 }
 
 /* semantic row styles emitted by the presenter's :style tokens */

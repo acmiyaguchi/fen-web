@@ -58,6 +58,24 @@ interface deliberately leaves the coroutine-resume mechanism to
 `packages/runtime` rather than deciding it in `packages/bindings`
 (`packages/bindings/src/kv/types.ts:7-19`).
 
+## fetch_abort (wired, optional per transport)
+
+`__fen_host.fetch_abort(id)` is the mid-turn cancellation seam. It calls the
+poller's `abort(id)`, which invokes the transport's optional per-request abort
+registration when available and marks that poll state as
+`{error: "cancelled", done: true}` without deleting it. Keeping the state
+until the Fennel loop polls it preserves any chunks already streamed and lets
+the normal `fetch_dispose` terminal branch release the poll state. The web
+transport registers its private `AbortController`; other `HostFetch`
+implementations may ignore the registration while still receiving the
+terminal poll result. `FetchPoller.abortAll()` is used by the page Stop/Esc
+path.
+
+A cancellation-aware Fennel request disposes before yielding the cancellation
+marker, because the marker unwinds the request coroutine. This prevents a
+cancelled poll id from leaking and ensures the provider does not render the
+transport abort as an ordinary error.
+
 ## fetch_dispose (wired, mandatory)
 
 `__fen_host.fetch_dispose(id)` drops the JS-side terminal state for a
@@ -66,8 +84,9 @@ completed request (`FetchPoller.dispose` in
 calls it on every terminal branch of the poll loop — not optional cleanup:
 without it, `FetchPoller`'s internal map grows by one entry per HTTP call
 for the life of the VM, since request ids are never reused. The runtime
-package wires `fetch_start`/`fetch_poll`/`fetch_dispose` to a shared
-`FetchPoller` instance's `start`/`poll`/`dispose` methods, in that order.
+package wires `fetch_start`/`fetch_poll`/`fetch_abort`/`fetch_dispose` to a
+shared `FetchPoller` instance's `start`/`poll`/`abort`/`dispose` methods, in
+that order.
 
 `dispose` (and the poller-level `disposeAll()`, the VM-teardown seam
 called before `rt.close()`) also releases any producer parked on a

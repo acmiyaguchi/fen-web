@@ -200,11 +200,18 @@
             (set ev.body-pretty (content->text (?. ev :result :content)))
             (table.insert state.transcript (copy-event ev)))
 
+        (= ev.type :cancelling)
+        (set s.cancelling? true)
+
         (= ev.type :cancelled)
         (do (set s.thinking? false)
             (set s.running-label nil)
             (set s.cancelling? false)
             (set s.turn-start 0)
+            ;; A cancellation can arrive after streamed deltas but before the
+            ;; provider emits its normal stream-end marker. Close that row so
+            ;; the next turn cannot append its first delta to old transcript.
+            (finish-streaming-assistant! false)
             (table.insert state.transcript (copy-event ev)))
 
         (or (= ev.type :assistant-text) (= ev.type :assistant-thinking))

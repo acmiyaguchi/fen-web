@@ -179,7 +179,23 @@
               (ingest.append-event {:type :tool-call :name "read" :arguments {}})
               (dom.render-frame! {})
               (assert.is_true (h.exists? "fen-panel-busy"))
-              (assert.is_true (h.exists? "fen-panel-busy-r1")))))))
+              (assert.is_true (h.exists? "fen-panel-busy-r1"))))))
+
+        (it "adds a busy-gated Stop button and dispatches its cancel event"
+          (fn []
+            (let [h (setup)
+                  called {}]
+              (set state.presenter-ctx {:is-busy? (fn [] true)})
+              (dom.ensure-skeleton!)
+              (dom.render-frame! {})
+              (assert.is_true (h.exists? "fen-stop"))
+              (assert.is_true (. (h.node "fen-stop") :listeners :click))
+              (h.emit "fen-stop" "click")
+              (dom.pump-input! {:request-cancel (fn [] (set called.hit true))})
+              (assert.is_true called.hit)
+              (set state.presenter-ctx {:is-busy? (fn [] false)})
+              (dom.render-frame! {})
+              (assert.is_false (h.exists? "fen-stop"))))))
 
     (describe "input pump"
       (fn []
