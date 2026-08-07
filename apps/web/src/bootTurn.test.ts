@@ -13,6 +13,7 @@ import {
   type HostFetch,
   type HostKv,
   ScriptedFetch,
+  SyncKvCache,
   seedIfEmptyKv,
   validateStarterFiles,
 } from "@fen-web/bindings";
@@ -78,6 +79,31 @@ function fetchBackendSource(): string {
   );
 }
 
+function sourcesWithRunFailure(message: string, yieldFirst = false): Map<string, FenSource> {
+  const sources = buildSources();
+  const boot = sources.get("fen_web.web.boot");
+  assert.ok(boot, "test source map should contain the web boot module");
+  const yieldExpr = yieldFirst ? "  (coroutine.yield)\n" : "";
+  sources.set("fen_web.web.boot", {
+    ...boot,
+    src: `${boot.src}\n(fn M.run [_ctx]\n${yieldExpr}  (error "${message}"))\nM\n`,
+  });
+  return sources;
+}
+
+async function drainTasks(
+  tasks: (() => void)[],
+  condition: () => boolean,
+  maxMs = 3000,
+): Promise<void> {
+  const start = Date.now();
+  while (!condition() && Date.now() - start < maxMs) {
+    const task = tasks.shift();
+    if (task) task();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 /** Read the real starter files from disk (the browser bundles them via
  * import.meta.glob in src/starter.ts; node reads them straight off the tree),
  * keyed by absolute vfs path — the same shape bootDemo stages for the seeder. */
@@ -92,8 +118,8 @@ function starterFilesFromDisk(): Record<string, string> {
 
 /** A table-backed synchronous kv (the SyncKv contract) seeded with the API
  * key under the exact path the fs_kv shim maps `os.getenv("<VAR>")` to. */
-function makeSyncKv() {
-  const store = new Map<string, string>();
+function makeSyncKv(backing?: Map<string, string>) {
+  const store = backing ?? new Map<string, string>();
   store.set("env/apikey/ANTHROPIC_API_KEY", KEY);
   return {
     sync: true as const,
@@ -254,4 +280,161 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
   await runUntil(() => stopped, 3000);
   await stopPromise;
   assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
+});
+
+test("run-loop crash flushes before closing and reports a fatal error", async () => {
+  const tasks: (() => void)[] = [];
+  const events: string[] = [];
+  let fatal: unknown;
+  const kv = makeSyncKv();
+  const session = await bootDemo(
+    { provider: "anthropic" },
+    {
+      sources: sourcesWithRunFailure("run-loop test crash", true),
+      fetchBackendSource: fetchBackendSource(),
+      kv,
+      dom: new FakeDom("fen-app"),
+      preview: new FakePreview(),
+      fetch: new ScriptedFetch(),
+      schedule: (fn) => void tasks.push(fn),
+      flush: async () => {
+        events.push("flush");
+      },
+      dispose: () => {
+        events.push("dispose");
+      },
+      onFatal: (err) => {
+        events.push("fatal");
+        fatal = err;
+      },
+    },
+  );
+
+  await drainTasks(tasks, () => fatal !== undefined);
+  assert.match(String(fatal), /run-loop test crash/);
+  assert.deepEqual(
+    events,
+    ["flush", "dispose", "fatal"],
+    "flush and disposal must precede fatal reporting",
+  );
+  await session.stop();
+});
+
+test("restart boots a fresh working session with the persisted vfs", async () => {
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  const dom = new FakeDom("fen-app");
+  // This map is only an async durable-store double. Exercising the real
+  // IndexedDB path under node is out of scope; SyncKvCache is the browser
+  // snapshot/write-back seam this test needs to verify.
+  const durable = new Map<string, string>([["env/apikey/ANTHROPIC_API_KEY", KEY]]);
+  const asyncBacking: HostKv = {
+    get: async (key) => durable.get(key),
+    put: async (key, value) => void durable.set(key, value),
+    delete: async (key) => void durable.delete(key),
+    list: async (prefix) => [...durable.keys()].filter((key) => key.startsWith(prefix)).sort(),
+  };
+  const firstKv = await SyncKvCache.load(asyncBacking);
+  const makeDeps = (kv: unknown): DemoRuntimeDeps => ({
+    sources: buildSources(),
+    fetchBackendSource: fetchBackendSource(),
+    kv,
+    dom,
+    preview: new FakePreview(),
+    fetch: new ScriptedFetch(),
+    schedule,
+  });
+
+  const first = await bootDemo({ provider: "anthropic" }, makeDeps(firstKv));
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "first VM should boot the presenter");
+  // Route the write through the first session's sync cache and wait for its
+  // async backing write, rather than asserting against the backing Map.
+  firstKv.put("fs:/restart.txt", "survives restart");
+  await first.flush();
+  let firstStopped = false;
+  void first.stop().then(() => {
+    firstStopped = true;
+  });
+  await drainTasks(tasks, () => firstStopped);
+  assert.ok(firstStopped, "first VM should stop");
+
+  // Simulate the browser's fresh SyncKvCache snapshot and the mount reset
+  // performed by main.ts before the second VM's first DOM batch.
+  dom.replaceChildren("fen-app");
+  const secondKv = await SyncKvCache.load(asyncBacking);
+  const second = await bootDemo({ provider: "anthropic" }, makeDeps(secondKv));
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  const secondChildren = dom.children("fen-app");
+  assert.ok(dom.exists("fen-input"), "fresh VM should boot the presenter");
+  assert.equal(new Set(secondChildren).size, secondChildren.length, "restart must not duplicate DOM ids");
+  assert.equal(secondKv.get("fs:/restart.txt"), "survives restart", "second boot snapshot should see flushed vfs");
+  assert.notStrictEqual(second, first, "restart must return a new session");
+  let secondStopped = false;
+  void second.stop().then(() => {
+    secondStopped = true;
+  });
+  await drainTasks(tasks, () => secondStopped);
+  assert.ok(secondStopped, "fresh VM should stop");
+});
+
+test("pre-pump setup failure flushes and reports a fatal error", async () => {
+  const events: string[] = [];
+  let fatal: unknown;
+  await assert.rejects(
+    () =>
+      bootDemo(
+        { provider: "anthropic" },
+        {
+          sources: buildSources(),
+          // installFetchBackend compiles this before createCoroutinePump's
+          // coroutine body can be pumped.
+          fetchBackendSource: "(this is not valid fennel",
+          kv: makeSyncKv(),
+          dom: new FakeDom("fen-app"),
+          preview: new FakePreview(),
+          fetch: new ScriptedFetch(),
+          flush: async () => {
+            events.push("flush");
+          },
+          dispose: () => {
+            events.push("dispose");
+          },
+          onFatal: (err) => {
+            events.push("fatal");
+            fatal = err;
+          },
+        },
+      ),
+  );
+  assert.ok(fatal, "setup failure should reach the fatal callback");
+  assert.deepEqual(
+    events,
+    ["flush", "dispose", "fatal"],
+    "flush and disposal must precede fatal reporting",
+  );
+});
+
+test("in-VM boot failure reaches the fatal callback", async () => {
+  const tasks: (() => void)[] = [];
+  let fatal: unknown;
+  const session = await bootDemo(
+    { provider: "anthropic" },
+    {
+      sources: sourcesWithRunFailure("in-VM boot test failure"),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(),
+      dom: new FakeDom("fen-app"),
+      preview: new FakePreview(),
+      fetch: new ScriptedFetch(),
+      schedule: (fn) => void tasks.push(fn),
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await drainTasks(tasks, () => fatal !== undefined);
+  assert.match(String(fatal), /in-VM boot test failure/);
+  await session.stop();
 });

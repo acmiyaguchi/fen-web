@@ -23,6 +23,8 @@ export type { DemoSession } from "./boot.js";
 export interface BrowserBootOptions extends DemoBootOptions {
   /** IndexedDB database name (kept overridable for tests). */
   dbName?: string;
+  /** Called after a fatal boot/run-loop error has been flushed and the VM closed. */
+  onFatal?: (err: unknown) => void | Promise<void>;
 }
 
 /**
@@ -36,6 +38,18 @@ export async function bootDemoInBrowser(
   opts: BrowserBootOptions = {},
 ): Promise<DemoSession> {
   const kvBacking = new IndexedDbKv(opts.dbName ?? "fen-web-demo");
+  let preview: WebHostPreview | undefined;
+  let handedOff = false;
+  const dispose = async (): Promise<void> => {
+    preview?.dispose();
+    try {
+      await kvBacking.close();
+    } catch (err) {
+      console.error("fen-web demo: failed to close IndexedDB", err);
+    }
+  };
+
+  try {
   // First-load starter seed (fen-web#9): atomically + durably seed the curated
   // starter project into IndexedDB BEFORE snapshotting, so the synchronous
   // cache only ever sees a consistent, fully-seeded (or fully-untouched) vfs.
@@ -74,8 +88,9 @@ export async function bootDemoInBrowser(
   // here also captures the current stored API key for in-VM resolution.
   const kv = await SyncKvCache.load(kvBacking);
   const dom = new WebHostDomApply();
+  preview = new WebHostPreview({ mountId: "fen-preview" });
 
-  return bootDemo(opts, {
+  const session = await bootDemo(opts, {
     sources: buildDemoSources(),
     fetchBackendSource,
     fennelSource,
@@ -84,8 +99,18 @@ export async function bootDemoInBrowser(
     dom,
     // The sandboxed preview iframe mounts under #fen-preview (index.html);
     // it renders the IndexedDB app tree and never gets allow-same-origin.
-    preview: new WebHostPreview({ mountId: "fen-preview" }),
+    preview: preview!,
     fetch: new WebHostFetch(),
     flush: () => kv.flush(),
+    dispose,
+    onFatal: opts.onFatal,
   });
+  handedOff = true;
+  return session;
+  } finally {
+    // Assembly failures happen before bootDemo owns the per-boot resources.
+    // bootDemo also invokes this seam for pre-pump failures; both operations
+    // are idempotent so the browser path stays leak-free in either case.
+    if (!handedOff) await dispose();
+  }
 }

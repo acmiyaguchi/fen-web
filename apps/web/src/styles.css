@@ -130,6 +130,57 @@ body {
   cursor: pointer;
 }
 
+/* --- fatal VM/run-loop errors --- */
+
+.fatal-panel {
+  background: var(--panel);
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: min(42rem, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fatal-panel h1 {
+  margin: 0;
+  color: var(--error);
+  font-size: 1.1rem;
+}
+
+.fatal-message {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fatal-stack {
+  max-height: 14rem;
+  margin: 0;
+  padding: 0.75rem;
+  overflow: auto;
+  color: var(--dim);
+  background: #12151a;
+  border: 1px solid #39414d;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.fatal-restart {
+  align-self: flex-start;
+  background: var(--accent);
+  color: #0b0e13;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 /* --- presenter mount (#fen-app) --- */
 
 .fen-app {
