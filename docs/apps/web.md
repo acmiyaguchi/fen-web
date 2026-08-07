@@ -192,3 +192,27 @@ assembler never emits the stored API key). See
 See also: [../architecture/fennel-first.md](../architecture/fennel-first.md)
 (`host.dom-apply` role), [extension.md](extension.md) for the other
 delivery shape.
+
+## Browser e2e
+
+The Chromium-only browser tier lives in `packages/e2e`. It builds the app and
+runs it through `vite preview`, while Playwright route interception supplies
+strict, ordered Anthropic Messages SSE fixtures; no provider credential or
+network request is used. Each test gets a fresh browser context, including a
+fresh IndexedDB origin.
+
+After `npm ci`, install the browser once with:
+
+```sh
+npx playwright install chromium
+```
+
+Run the suite headlessly with:
+
+```sh
+npm run e2e -w @fen-web/e2e
+```
+
+The Playwright config starts `npm run build` followed by
+`npm run preview -w @fen-web/web` automatically. On CI, the Chromium download
+is cached and traces/reports are uploaded when the e2e job fails.

@@ -1,0 +1,16 @@
+{
+  "name": "@fen-web/e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "e2e": "npm run typecheck && playwright test",
+    "test:headed": "npm run typecheck && playwright test --headed",
+    "install:browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "typescript": "^5.6.3"
+  }
+}

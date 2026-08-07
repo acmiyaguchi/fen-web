@@ -1,0 +1,6 @@
+{
+  "name": "rate limited provider",
+  "turns": [
+    { "request": { "userText": "Trigger a rate limit." }, "response": { "fixture": "429.json", "status": 429, "contentType": "application/json", "headers": { "retry-after-ms": "0" } } }
+  ]
+}
