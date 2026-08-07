@@ -63,6 +63,7 @@
        :list backend.list
        :latest backend.latest
        :get backend.get
+       :delete backend.delete
        :doctor backend.doctor
        :acquire-lock backend.acquire-lock
        :latest-extension-state backend.latest-extension-state

@@ -461,6 +461,27 @@
          :header-written? true}))))
 
 ;; ----------------------------------------------------------------
+;; delete
+;; ----------------------------------------------------------------
+
+(fn make-delete [kv]
+  (fn [ref]
+    "Delete a session's metadata, entries, and secondary index records.
+    The index is scanned by value rather than reconstructed from cwd so this
+    also removes stale records left by an interrupted write or old metadata."
+    (let [id (if (= (type ref) :table) ref.id ref)
+          id (and id (tostring id))
+          meta (and id (read-meta kv id))]
+      (when id
+        (each [_ k (ipairs (or (kv.list (entry-prefix id)) []))]
+          (kv.delete k))
+        (each [_ k (ipairs (or (kv.list "session-index:") []))]
+          (when (= (tostring (kv.get k)) id)
+            (kv.delete k)))
+        (kv.delete (meta-key id)))
+      (not= meta nil))))
+
+;; ----------------------------------------------------------------
 ;; doctor: cheap non-destructive integrity scan
 ;; ----------------------------------------------------------------
 
@@ -516,7 +537,7 @@
 ;; @doc fen_web.sessions.kv_session.new
 ;; kind: function
 ;; signature: (new kv) -> backend-methods
-;; summary: Bind the kv-backed session backend's methods to one synchronous host.kv table, returning open/open-existing/append/close/load/find/list/latest plus create/doctor/get/acquire-lock/latest-extension-state.
+;; summary: Bind the kv-backed session backend's methods to one synchronous host.kv table, returning open/open-existing/append/close/load/find/list/latest plus create/delete/doctor/get/acquire-lock/latest-extension-state.
 ;; tags: session kv backend
 (fn M.new [kv]
   {:open (make-open kv)
@@ -530,6 +551,7 @@
    :list (make-list kv)
    :latest (make-latest kv)
    :get (make-get kv)
+   :delete (make-delete kv)
    :doctor (make-doctor kv)
    :acquire-lock M.acquire-lock
    :latest-extension-state (make-latest-extension-state kv)

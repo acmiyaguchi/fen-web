@@ -475,6 +475,13 @@ body {
 .row.style-tool {
   color: var(--accent);
 }
+/* Local/system rows: slash-command output (#40). Distinct from :dim so
+   /sessions and /help read as shell responses, not model text. */
+.style-system,
+.row.style-system {
+  color: var(--accent);
+  opacity: 0.85;
+}
 .style-status {
   color: var(--dim);
 }
