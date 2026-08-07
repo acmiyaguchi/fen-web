@@ -9,8 +9,11 @@
 export interface FetchRequestOptions {
   method: string;
   url: string;
+  /** HTTP header names and values must be ASCII; the transports reject
+   * non-ASCII entries instead of applying the Lua byte-string conversion. */
   headers?: Record<string, string>;
-  /** Pre-encoded request body, if any. */
+  /** Request body text after wasmoon has UTF-8-transcoded the Lua string to
+   * JS. The transport encodes it as UTF-8 before passing it to fetch(). */
   body?: string;
   /** Overall request timeout. */
   timeoutMs?: number;
@@ -22,9 +25,9 @@ export interface FetchRequestOptions {
   /** Abort if no new bytes arrive for this many ms. 0/undefined disables
    * the idle watchdog. */
   idleTimeoutMs?: number;
-  /** Streaming sink. Called with each chunk of the response body as a
-   * Lua-compatible byte string (see toLuaBytes for why). Optional — when
-   * omitted, only the accumulated body is returned. A promise may be
+  /** Streaming sink. Called with each response chunk as the transport's
+   * intermediate byte-string representation (see toLuaBytes). Optional —
+   * when omitted, only the accumulated body is returned. A promise may be
    * returned to apply backpressure to a poll-based consumer. */
   onChunk?: (bytes: string) => void | PromiseLike<void>;
   /** Mirrors fen's :accumulate-body? (default true). When false, the

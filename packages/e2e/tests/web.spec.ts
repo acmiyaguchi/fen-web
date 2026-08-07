@@ -27,6 +27,19 @@ test.describe("browser happy path", () => {
   });
 });
 
+test("sends a non-ASCII user prompt as valid JSON to the scripted provider", async ({ page }) => {
+  const prompt = "Say hello with café, an em dash — and emoji 💥.";
+  const router = new ScriptedAnthropicRouter(page, "non-ascii.json");
+  await router.install();
+  await startWithFakeKey(page);
+
+  await submitPrompt(page, prompt);
+  await expectTranscript(page, "> " + prompt);
+  await expectTranscript(page, "Hello from the scripted provider.");
+
+  await router.assertComplete();
+});
+
 test("executes ordered Anthropic tool_use turns, persists the file, and refreshes the sandbox preview", async ({
   page,
 }) => {
