@@ -3,185 +3,156 @@
 [Issue #15](https://github.com/acmiyaguchi/fen-web/issues/15).
 `fen.util.process` and `cjson` landed with `packages/runtime` (commit
 `02f4b1a`, see [../runtime/boot.md](../runtime/boot.md)'s "Built-in
-preload stubs"). The `os.time`/settings/API-key half lives in
-`packages/platform/fnl/fen_web/shims/fs_kv.fnl`, described below.
-
-fen core leaks `os`/`io`/native modules past the HTTP and FS seams. These
-block the headless turn (#5) and need small browser shims, preloaded into
-`package.loaded` from the runtime bootstrap — same pattern as the HTTP
-backend stub in `fen/packages/testing`. Policy stays in Fennel; each shim
-is meant to be tiny.
+preload stubs"). The v0.17 clock, path, and config-storage seams are also
+fulfilled by runtime preloads. `fs_kv` remains only for direct POSIX IO in
+web paths that have not yet acquired a module seam.
 
 ## Needed shims
 
-| fen dependency | Source | Shim |
+| fen dependency | Source/seam | Browser fulfillment |
 |---|---|---|
-| `fen.util.process.monotonic-ms` (native `fen_process`) | agent latency timing; retry's coop sleep (busy-yield to a monotonic deadline) | Implemented in `packages/runtime` — `performance.now()` via host. Also used by reload diagnostics — see [../runtime/reload.md](../runtime/reload.md) |
+| `fen.util.process` (native `fen_process`) | agent latency/retry process calls | Implemented in `packages/runtime` — unsupported process operations fail clearly; see [../runtime/boot.md](../runtime/boot.md) |
+| `fen.util.clock.backend` | v0.17 monotonic clock and cooperative sleep seam | Implemented in `packages/runtime` — `performance.now()` via `host.now_ms`; sleep is a no-op yield point |
+| `fen.util.path.backend` | v0.17 path/VFS seam, including `path.getenv` | Implemented in `packages/runtime` — API-key names resolve from `host.kv`; probes return browser-safe fallbacks |
+| `fen.core.storage.backend` | v0.17 config-document storage seam | Implemented in `packages/runtime` — settings/models bytes read and written through synchronous `host.kv` |
+| `os.time`/`os.date`/`os.clock` timestamps | `fen/packages/core/src/fen/core/types.fnl`, `fen/packages/core/src/fen/core/tools.fnl` | Not shimmed — wasmoon's Lua 5.4 stdlib provides the needed in-VM clock functions |
 | `fen.util.random` (native module) | — | Planned — `crypto.getRandomValues` |
-| `os.time`/`os.date`/`os.clock` timestamps | `fen/packages/core/src/fen/core/types.fnl`, `fen/packages/core/src/fen/core/tools.fnl` | Not shimmed — wasmoon's Lua 5.4 stdlib already provides working `os.time`/`os.date`/`os.clock` in-VM (verified against `packages/runtime`'s `createFenRuntime`; the WASM runtime reads a real wall clock without touching host OS syscalls), so there is nothing to override |
-| `core/settings.fnl` (`io.open`, `os.remove`) | settings persistence | Implemented — `fen_web.shims.fs-kv` |
-| `core/llm/models.fnl` (`io.open`, `os.getenv` for API keys) | model/key config | Implemented — `fen_web.shims.fs-kv`; this is where BYO-key storage (issue #7) plugs in |
 
-`core` only needs `monotonic-ms` from `fen.util.process` — no other method
-of that module is required for the headless turn.
+The important v0.17 change is that `fen.core.settings` no longer calls
+`io.open`/`os.rename` itself: it calls `fen.core.storage`. Likewise,
+`fen.core.llm.models` reads its document through `fen.core.storage` and
+resolves environment-variable-shaped API keys through `fen.util.path.getenv`.
+The runtime preloads those two backend modules before any core module loads,
+so browser boot does not need a global filesystem or environment monkeypatch
+for configuration or API-key lookup.
 
 ## `fen_web.shims.fs-kv`
 
-`packages/platform/fnl/fen_web/shims/fs_kv.fnl`. `core/settings.fnl` and
-`core/llm/models.fnl` are large modules with real business logic well
-past their IO calls (models.fnl alone is ~640 lines of provider/model
-resolution), so rather than reimplementing either module wholesale, this
-shim monkey-patches the five Lua globals those two files actually call —
-`io.open`, `os.remove`, `os.rename`, `os.execute`, `os.getenv` — so both
-modules load and run completely unmodified against `host.kv`, preserving
-their public API by construction:
+`packages/platform/fnl/fen_web/shims/fs_kv.fnl` is no longer the settings or
+models fulfillment. It remains necessary for the browser's direct Codex auth
+keychain, which is in the OpenAI extension tree and still uses POSIX globals:
 
-- `io.open(path, "r")` → `kv.get(path)`, `nil, err` on a missing key
-  (matching real `io.open`'s missing-file behavior).
-- `io.open(path, "w")` → a buffered handle that commits via `kv.put` on
-  `:close`.
-- `os.remove(path)` → `kv.delete(path)`.
-- `os.rename(from, to)` → copies the kv value to `to` and deletes `from`,
-  for `settings.fnl`'s atomic-write-then-rename dance.
-- `io.open(path, "a")` → a buffered handle seeded from the current
-  `kv.get(path)` value, appending on `:write` and committing the whole
-  buffer via `kv.put` on `:close` — the append path `jsonl.fnl` uses for
-  durable diagnostics.
-- Modes real `io.open` recognizes but this shim doesn't implement
-  (`"r+"`/`"w+"`/`"a+"`, with or without a trailing `"b"`) return `nil,
-  err` rather than throwing — matching the fact that a real update-mode
-  open can fail for ordinary, already-handled reasons. A genuinely
-  malformed mode string still `error()`s, matching real `io.open`.
-- `os.execute(cmd)` → success only when `cmd` matches `^mkdir %-p`
-  (`settings.fnl`'s `ensure-dir!`, meaningless over a flat kv namespace
-  but harmless to report as done); anything else returns failure (`nil,
-  "exit", 127`) rather than falsely claiming a command ran. `io.popen` is
-  intentionally left unpatched, so any caller that shells out for
-  something this shim doesn't understand fails loudly instead of the VM
-  reporting two different lies (a fake success from `os.execute`, a real
-  attempt from `io.popen`).
-- `os.getenv(name)` → allowlisted: only names shaped like an API-key env
-  var (`^[A-Z][A-Z0-9_]*$` ending in `_KEY`/`_TOKEN`/`_SECRET`, or the
-  literal `KEY`) are looked up at all, under `kv.get("env/apikey/" ..
-  name)`; everything else returns `nil` without ever touching kv. This is
-  where issue #7's BYO-key storage writes: setting a provider's API key
-  means `kv.put("env/apikey/OPENAI_API_KEY", "...")` (or
-`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, …), and any
-  `models.json` entry whose `apiKey` is that env-var name resolves
-  through this. The allowlist exists because `os.getenv` is a shared
-  global — without it, UI-writable kv content could drive `FEN_LOG`,
-  `FEN_DEV_PATH`, `FEN_TOOL_RESULT_MAX_BYTES`, and every other `FEN_*`
-  debug/dev flag fen reads via `os.getenv`, not just API keys.
+- `os.getenv(name)` → `nil`. This preserves the env-less HOME/XDG/FEN_AUTH_DIR
+  fallback used by the browser seed (`//.config/fen/auth.json`) and prevents
+  UI-writable kv content from setting process/debug flags. API-key lookup is
+  no longer handled here; it uses `fen.util.path.getenv`.
+- `io.open(path, "r")` → `kv.get(path)`, with a missing-key error;
+  `io.open(path, "w")` → a buffered truncate handle; and
+  `io.open(path, "a")` → a buffered append handle seeded from `kv.get(path)`.
+  `:close` commits through `kv.put`; `:flush` remains a deliberate no-op
+  because the synchronous kv view has no separate flush operation. Binary
+  suffixes are accepted. Update modes return `nil, err`, and malformed modes
+  still error clearly.
+- `os.remove(path)` → `kv.delete(path)`, retained for temporary auth-file
+  cleanup.
+- `os.rename(from, to)` → copy to the new kv key and delete the old one,
+  retained for the Codex auth keychain's atomic temp-file replacement.
+- `os.execute(cmd)` → success for `mkdir -p ...`, which is a no-op over the
+  flat kv namespace; every other command returns `nil, "exit", 127` rather
+  than claiming that a shell command ran. Codex's best-effort `chmod` call
+  and JSONL's directory preparation both pass through this operation.
 
-`install!(kv)` applies all five patches; call it once from runtime
-bootstrap before `fen.core.settings`/`fen.core.llm.models` are required
-(production-safe — see the ordering caveat below). It asserts
-`kv.get`/`kv.put`/`kv.delete` are functions so a misconfigured caller
-fails at install time. `snapshot-globals`/`uninstall!` capture and restore
-the five patched globals, for tests that install per-case and must not
-leak the patch into unrelated specs; production boot has no reason to
-call `uninstall!`.
+`fen.util.jsonl.append!` can also reach append IO when the event bus persists
+an error, and provider diagnostics have the same shape. These are additional
+load-bearing paths, but neither is the reason settings/models use `host.kv`.
 
-Read/write handles route any method this shim doesn't implement (`:seek`,
-`:setvbuf`, ...) through a `__index` metamethod that errors with a clear
-"not supported by the kv-backed shim" message instead of Lua's generic
-"attempt to call a nil value". By design, a `kv.get(path)` (or a fresh
-`io.open(path, "r")`) issued before a write/append handle's `:close`
-never sees the buffered-but-uncommitted content — the same visibility a
-real buffered `FILE*` has before its own flush/close reaches the OS.
+`install!(kv)` therefore retains the five global operations only for those
+unseamed web paths; the web boot installs it once per VM. The headless
+integration script does not install it because its orchestration does not load
+the Codex keychain and does not route its collected events through durable
+JSONL diagnostics. `snapshot-globals`/`uninstall!` capture and restore all
+five globals for unit tests.
 
-Busted specs (`packages/platform/tests/fs_kv_test.fnl` for the shim in
-isolation; `settings_test.fnl`/`api_keys_test.fnl` for the two real fen
-modules routed through it) exercise this against a synchronous
-table-backed kv (`packages/platform/tests/support.fnl`); production
-`host.kv` is async (IndexedDB), so a runtime-side coroutine-pumped bridge
-from that async surface to these synchronous call sites — the same
-yield-across-C-call-boundary shape `host-protocol.md` documents for fetch
-— is `packages/runtime`'s job at boot time, not this module's.
+**Test-vs-production install-order caveat**: Busted specs must load any real
+fen module whose source the Fennel searcher needs before calling `install!`.
+The shim's `io.open` cannot read `.fnl` source files after installation.
+Production `packages/runtime` reads Fennel sources through its JS-side
+`SourceLookup`, so there is no equivalent source-loading hazard at browser
+boot.
 
-**Test-vs-production install-order caveat**: Busted specs must `require`
-the real fen module (against the real, unpatched `io.open`) before
-calling `install!`, because Busted's own Fennel searcher reads `.fnl`
-source files off disk via `io.open` — installing the shim first makes
-*module loading itself* try to fetch the module's source out of the
-(empty) test kv. This is a Busted-searcher artifact only: production
-`packages/runtime` reads every Fennel source through a JS-side
-`SourceLookup` (see [../runtime/boot.md](../runtime/boot.md)), never
-through `io.open`, so calling `install!` before the very first `require`
-at real boot time is safe — there is no equivalent hazard there.
+## Verification against fen v0.17
+
+The v0.17 `fen` submodule, its extension tree, and the fen-web Fennel trees
+were searched for every operation that the old shim patched. The result below
+distinguishes a target call site made redundant by v0.17 from a separate
+browser path that still needs the same global operation.
+
+| Global | Call paths that could reach it in web boot | Disposition |
+|---|---|---|
+| `os.getenv` | `fen_web.web.boot` used to read the API key; `fen.core.llm.models` and `fen.util.path` now use `path.getenv`; `openai_codex_keychain.fnl` still reads HOME/XDG_CONFIG_HOME/FEN_AUTH_DIR directly | **API-key patch removed as a responsibility, global patch kept.** Web boot now uses `path.getenv`, but Codex's auth path depends on the env-less fallback that browserBoot seeds into kv, so `fs_kv.getenv` must continue returning nil. |
+| `io.open` | Default config storage reads/writes files but is defeated by `fen.core.storage.backend`; Codex auth reads/writes `auth.json`; `fen.util.jsonl`/provider diagnostics append files | **Kept.** The settings/models call paths are gone, but Codex read/write and diagnostic append paths still reach the global. The shim keeps r/w/a rather than only append mode. |
+| `os.remove` | Default config storage cleanup is defeated by `fen.core.storage.backend`; Codex auth removes a failed temp file; other CLI/extension code is outside normal web boot | **Kept for Codex atomic-write cleanup.** |
+| `os.rename` | Default config storage atomic replace is defeated by `fen.core.storage.backend`; Codex auth atomically replaces `auth.json`; other CLI/extension code is outside normal web boot | **Kept for Codex atomic writes.** |
+| `os.execute` | `fen.util.path.ensure-dir!` precedes JSONL append; Codex auth creates its directory and attempts chmod; default config/build/CLI paths are otherwise outside normal web boot | **Kept.** `mkdir -p` is a harmless kv no-op and other commands fail. |
+
+The actual redundant work removed by this issue is the settings/models/API-key
+premise and integration install: configuration now uses the two v0.17
+preloaded seams, web boot resolves its provider key with `path.getenv`, and
+`packages/integration/src/turnScript.fnl` no longer installs a VM-wide shim it
+does not use. The retained patches are justified by direct extension call
+paths, not by the old core call sites.
+
+The browser-native file tools do not use these globals: they register
+`read`/`write`/`edit`/`find`/`grep`/`ls` over `fen_web.tools.vfs`, and they do
+not register fen's shelling-out `bash` tool.
 
 ## Blast radius
 
-`install!` patches `io.open`/`os.remove`/`os.rename`/`os.execute`/
-`os.getenv` VM-wide, not just for the two modules issue #15 targets.
-Every fen module that touches any of those five globals is affected the
-moment the shim is installed. This table is what a fen version bump
-should be diffed against (a new `os.getenv`/`io.open` call site in fen
-either needs to already be covered here or is a new blast-radius gap):
+The web boot now has explicit module seams for core configuration and
+credentials, while the remaining global shim is limited to direct POSIX
+extension paths:
 
-| Module | Global(s) used | Effect once `fs-kv` is installed |
+1. `fen.core.storage.backend` owns settings/models document bytes.
+2. `fen.util.path.backend` owns path probes and API-key environment lookup.
+3. `fs_kv.install!` owns direct Codex auth IO plus optional diagnostic IO.
+
+| Module/path | Global or seam | Effect in browser boot |
 |---|---|---|
-| `fen.core.settings` | `io.open` (`r`/`w`), `os.remove`, `os.rename`, `os.execute` | Intended target — settings.json round-trips through kv |
-| `fen.core.llm.models` | `io.open` (`r`), `os.getenv` | Intended target — models.json + apiKey env-var resolution through kv |
-| `fen.util.log_sink` | `io.open` (`a`) | Log file sink now appends into kv instead of a real file; append-mode support (this review round) makes this work rather than silently truncating |
-| `fen.util.jsonl` | `io.open` (`a`), `:flush` | Diagnostics JSONL append path now writes into kv; `:flush` is a no-op (nothing to flush until `:close` commits) |
-| `fen.util.checksum` | `io.open` (`rb`) | Reload-diagnostics file fingerprinting reads through kv instead of disk; `rb` mode works via the binary-suffix strip |
-| `fen.util.path` | `os.getenv` (`HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `XDG_DATA_HOME`, `PWD`) | None of these are API-key-shaped, so the allowlist returns `nil` for all of them — `path.fnl`'s hardcoded `/tmp`/`~/.config`/`~/.local/state`/`~/.local/share` fallbacks are what actually take effect, which is what gives `settings.fnl`/`models.fnl` their deterministic kv key paths in tests |
-| `fen.util.process` | `os.getenv` (`HOME`, `XDG_STATE_HOME`) | Same as above — allowlist returns `nil`, fallback paths apply |
-| `fen.core.extensions.loader.discover`, `fen.core.extensions.loader.reload`, `fen.core.extensions.rocks`, `fen.util.checksum`, `fen.util.log`, `fen.util.text` | `os.getenv` (`FEN_FIRST_PARTY_EXTENSIONS_PATH`, `FEN_EXTENSIONS_PATH`, `FEN_DEV_PATH`, `FEN_ROCKS_TREE`, `LUA`, `FEN_LOG`, `FEN_TOOL_RESULT_MAX_BYTES`) | All `FEN_*`/dev-tooling flags — none API-key-shaped, so all return `nil` regardless of kv content. This is deliberate: these are debug/dev escape hatches, not something UI-writable browser state should ever drive |
-| `fen.fen.main`, `fen.fen.runtime`, `fen.fen.update` | `os.getenv` (`FEN_BIN`, `PATH`, `FEN_ARCH`) | CLI-launcher-only concerns not reachable in-VM in the browser runtime at all (these modules aren't part of the `fen.core.agent` require subgraph `packages/runtime` boots); listed for completeness in case that changes |
+| `fen.core.settings` | `fen.core.storage` | Settings JSON round-trips through `host.kv`; no `io.open`/rename patch is involved. |
+| `fen.core.llm.models` | `fen.core.storage`, `fen.util.path.getenv` | Models JSON and API-key references resolve through `host.kv`; no `io.open`/`os.getenv` patch is involved. |
+| `fen.util.path` | `fen.util.path.backend` | `HOME`/XDG/PWD and browser path probes use host-provided fallbacks; API-key names use `env/apikey/<NAME>`. |
+| `fen.extensions.provider_openai.openai_codex_keychain` | retained `os.getenv`, `io.open`, `os.remove`, `os.rename`, `os.execute` | Auth path reads and atomic writes use the kv-backed compatibility layer; browserBoot's seeded `auth.json` is visible. |
+| `fen.core.extensions.events` → `fen.util.jsonl` | retained `io.open "a"`, `os.execute` | The append path is exercised but not durable today: `jsonl.append!` holds its handle open across calls and fs_kv commits only on `:close` (`:flush` is a no-op), so nothing persists through this path — the patches keep it error-free, not durable. |
+| provider diagnostics / `fen.util.log_sink` | retained append/write IO when explicitly enabled | Optional diagnostic sink; not part of normal Anthropic boot. |
+| POSIX storage/path/discovery/checksum/build/CLI backends | direct POSIX globals | Most are source-map/preload-selected out of normal web boot. |
+| browser file tools | explicit `fen_web.tools.vfs` kv calls | No global filesystem operation; virtual files use the `fs:` keyspace. |
 
-## Host IO profiles
+## Host IO profiles and issue #22
 
 Tracked as [issue #22](https://github.com/acmiyaguchi/fen-web/issues/22),
-filed after both strategies below existed and turned out to conflict.
-Not yet implemented as an explicit choice — today it's just "which script
-you run."
+filed before fen v0.17 introduced the storage/path seams. The v0.17 work
+shrinks the issue substantially: settings and API-key lookup no longer need a
+global IO profile, but Codex auth and optional diagnostics still do.
 
-Two working IO strategies exist and are **mutually exclusive**:
+Two runtime environments still exist for those POSIX-shaped operations:
 
-- **`browser-kv`** — `fs_kv.install!` is called: `io.open`/`os.remove`/
-  `os.rename`/`os.execute`/`os.getenv` are monkey-patched onto `host.kv`
-  (see above). This is the only sane choice under wasmoon regardless of
-  host, since [wasmoon's `io`/`os` reach an Emscripten MEMFS virtual
-  filesystem, not the real one, even under Node](../runtime/boot.md#in-vm-io-and-os-reach-a-virtual-filesystem-not-the-host)
-  — real `io.open` calls are meaningless in-VM without this shim.
-  Used by `turn.test.ts` ([integration.md](../integration.md)).
-- **`node-passthrough`** — `fs_kv` is **not** installed; instead, real
-  files are mounted into wasmoon's MEMFS via its internal FS object (see
-  [integration.md](../integration.md)'s MEMFS section and
-  [issue #18](https://github.com/acmiyaguchi/fen-web/issues/18)), so
-  fen's own `io.open`/`os.getenv` calls resolve against those mounted
-  bytes unmodified. Used by `e2e-codex.mts`, which needs
-  `openai_codex_keychain.fnl`'s real OAuth-file reads to work without any
-  patching.
+- **`browser-kv`** — the runtime preloads `fen.core.storage.backend` and
+  `fen.util.path.backend` over `host.kv`; the web boot also installs `fs_kv`
+  for the direct Codex auth keychain and optional diagnostics. Browser file
+  tools and sessions always use explicit kv APIs.
+- **`node-passthrough`** — `fs_kv` is not installed; real files are mounted
+  into wasmoon's MEMFS for the Codex keychain harness, so fen's unmodified
+  POSIX IO can read those mounted bytes. See [../integration.md](../integration.md)
+  and [issue #18](https://github.com/acmiyaguchi/fen-web/issues/18).
 
-**Mixing silently breaks.** Installing `fs_kv` after real files are
-mounted (or vice versa) doesn't error — it just makes one strategy's
-writes invisible to the other's reads, since `fs_kv` redirects `io.open`
-to `host.kv` while the mount writes land in MEMFS proper. There is no
-runtime-level guard against this today; `createFenRuntime`
-([../runtime/boot.md](../runtime/boot.md)) has no concept of an IO
-profile — a caller picks one implicitly by which of `fs_kv.install!` /
-`mountRealAuthJson`-style mounting it calls, and nothing stops it calling
-both. The ask in #22 is for the runtime/bootstrap to expose an explicit
-profile choice (`"browser-kv" | "node-passthrough"`) and error on an
-incoherent combination, rather than leaving this as a convention two
-call sites happen to follow correctly today.
+Mixing the profiles can still make mounted auth reads and kv-backed writes
+observe different stores. Therefore #22 should be **shrunk, not closed**: it
+no longer needs to govern settings or API-key selection, but an explicit
+profile/guard remains useful for Codex authentication and diagnostic code that
+intentionally exercises POSIX-shaped IO.
 
 ## Mechanism
 
-Same as the HTTP backend: preload replacement Fennel modules into
-`package.loaded` before the rest of core requires them, rather than
-patching fen. See [../architecture/seams.md](../architecture/seams.md) for
-the general installation pattern (note: these are not registrable seams,
-just hard dependencies that need blind substitution). `fs-kv` uses a
-variant of this — global monkey-patching instead of a `package.loaded`
-substitution — since `io`/`os` are stdlib globals, not `require`d modules.
+The config/path fulfillments use the normal `package.loaded` preload seam,
+installed by `packages/runtime` before core requires them. This is the same
+mechanism as the HTTP backend and avoids patching fen source files.
 
-Blocked [issue #5](https://github.com/acmiyaguchi/fen-web/issues/5)
-(headless turn milestone; closed) until this shim landed.
+The remaining `fs_kv` shim is different because `io` and `os` are Lua stdlib
+globals rather than required modules. Its global scope is intentionally
+limited to the direct extension paths verified above; a future fen version
+bump should re-run that call-path check before removing or adding a patch.
 
 See also: [../bindings/kv.md](../bindings/kv.md),
+[../runtime/boot.md](../runtime/boot.md),
 [../runtime/reload.md](../runtime/reload.md),
-[../integration.md](../integration.md).
+[../architecture/seams.md](../architecture/seams.md).

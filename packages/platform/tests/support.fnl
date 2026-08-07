@@ -1,8 +1,7 @@
 ;; Shared test support for packages/platform specs: a synchronous
-;; table-backed kv (the Busted-side stand-in docs/bindings/kv.md and the
-;; issue #15 brief describe) plus save/restore helpers for the globals
-;; fen_web.shims.fs-kv monkey-patches, so one spec's `install!` can't leak
-;; into another spec file.
+;; table-backed kv (the Busted-side stand-in docs/bindings/kv.md describes).
+;; fs-kv still patches direct POSIX globals for Codex auth/diagnostics, so
+;; snapshot helpers capture all globals that install! can change.
 
 (local M {})
 
@@ -26,10 +25,51 @@
                keys))
      :__store store}))
 
+(fn api-key-shaped? [name]
+  (let [s (tostring (or name ""))]
+    (and (string.match s "^[A-Z][A-Z0-9_]*$")
+         (or (string.match s "_KEY$")
+             (string.match s "_TOKEN$")
+             (string.match s "_SECRET$")
+             (string.match s "^KEY$")))))
+
+;; @doc test-support.install-kv-seams!
+;; kind: function
+;; signature: (install-kv-seams! kv) -> nil
+;; summary: Preload the v0.17 storage/path backend seams with a synchronous kv double for tests of fen.core.settings and fen.core.llm.models.
+;; tags: test support seams storage path
+(fn M.install-kv-seams! [kv]
+  (tset package.loaded :fen.core.storage.backend
+        {:read (fn [path] (kv.get path))
+         :write! (fn [path content] (kv.put path content))})
+  (tset package.loaded :fen.util.path.backend
+        {:getenv (fn [name]
+                   (if (api-key-shaped? name)
+                       (kv.get (.. "env/apikey/" (tostring name)))
+                       nil))
+         :stat (fn [_path] nil)
+         :list-dir (fn [_dir] [])
+         :pwd-physical (fn [_dir] ".")})
+  (tset package.loaded :fen.core.storage nil)
+  (tset package.loaded :fen.util.path nil)
+  nil)
+
+;; @doc test-support.clear-kv-seams!
+;; kind: function
+;; signature: (clear-kv-seams!) -> nil
+;; summary: Clear public and preloaded v0.17 seam modules so the next spec can install a fresh backend double.
+;; tags: test support seams storage path
+(fn M.clear-kv-seams! []
+  (tset package.loaded :fen.core.storage nil)
+  (tset package.loaded :fen.core.storage.backend nil)
+  (tset package.loaded :fen.util.path nil)
+  (tset package.loaded :fen.util.path.backend nil)
+  nil)
+
 ;; @doc test-support.snapshot-globals
 ;; kind: function
 ;; signature: (snapshot-globals) -> table
-;; summary: Capture the io.open/os.remove/os.rename/os.execute/os.getenv globals fs-kv.install! patches, for restore-globals to undo after a spec.
+;; summary: Capture the io.open/os.remove/os.rename/os.execute/os.getenv globals retained by fs-kv.install!, for restore-globals to undo after a spec.
 ;; tags: test support globals
 (fn M.snapshot-globals []
   {:io-open io.open

@@ -1,8 +1,9 @@
 import { IndexedDbKv } from "@fen-web/bindings";
 
 /**
- * BYO-key settings storage. Keys live in IndexedDB under the same path the
- * `fs_kv` shim maps `os.getenv("<VAR>")` to (`env/apikey/<VAR>`, see
+ * BYO-key settings storage. Keys live in IndexedDB under `env/apikey/<VAR>`,
+ * the path the runtime's `fen.util.path.backend` stub reads for in-VM
+ * `path.getenv("<VAR>")` (see packages/runtime/src/stubs.ts and
  * docs/platform/shims.md), so an in-VM `models.json` apiKey env-var
  * reference resolves through the exact seam the desktop provider uses.
  *

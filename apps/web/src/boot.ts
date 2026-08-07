@@ -21,7 +21,8 @@ export interface DemoBootOptions {
   /** Provider id — only "anthropic" is wired today (see docs/apps/web.md).
    * Anything else is rejected up front rather than silently routed to
    * Anthropic. The API key is NOT passed here: it is resolved in-VM via
-   * `os.getenv("<VAR>")` → kv path `env/apikey/<VAR>` (docs/platform/shims.md),
+   * `path.getenv("<VAR>")` → kv path `env/apikey/<VAR>` served by the
+   * preloaded `fen.util.path.backend` stub (docs/platform/shims.md),
    * the same credential seam the desktop provider uses. */
   provider?: string;
   /** Model id; defaults to the provider's default when omitted. */

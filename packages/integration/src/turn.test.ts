@@ -201,8 +201,9 @@ function openaiSseChunks(replyText: string): string[] {
  * Empirical check (issue #5's brief asks this be verified, not assumed):
  * wasmoon marshals a plain (non-Promise-returning) JS function set on
  * __fen_host into a Lua call that returns synchronously, with no await
- * needed on the Lua side. fs_kv.fnl's install! (packages/platform/fnl/
- * fen_web/shims/fs_kv.fnl) requires exactly this -- io.open et al are
+ * needed on the Lua side. fs_kv.fnl (packages/platform/fnl/
+ * fen_web/shims/fs_kv.fnl, still installed by web boot for the Codex
+ * auth keychain) requires exactly this -- io.open et al are
  * ordinary synchronous Lua calls, and if kv.get returned a
  * promise-shaped table instead of a string, fs-kv's `(= content nil)`
  * check would silently misbehave rather than erroring loudly.

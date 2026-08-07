@@ -26,7 +26,30 @@ compiler."
 
 No macros exist anywhere in `core`/`util`, so `compileString` needs no
 compiler-env (caveat: `fen/testing/macros.fnl` exists if tests ever run
-in-page). Stubs needed for cold load: `cjson`, `fen.util.process` only.
+in-page). Built-in preloads needed for cold load include `cjson`,
+`fen.util.process`, `fen.util.clock.backend`, `fen.util.path.backend`, and
+`fen.core.storage.backend`.
+
+## v0.17 host seams
+
+The browser source map can contain fen's default POSIX backend sources without
+selecting them. `packages/runtime` preloads the host fulfillments before the
+custom Fennel searcher runs:
+
+- `fen.core.storage.backend` maps `fen.core.settings` and
+  `fen.core.llm.models` document reads/writes to the synchronous `host.kv`
+  view.
+- `fen.util.path.backend` supplies browser-safe path probes and resolves
+  API-key-shaped `path.getenv` names from `host.kv`'s
+  `env/apikey/<NAME>` namespace.
+- `fen.util.clock.backend` supplies v0.17's monotonic clock/sleep seam.
+
+This is a module preload seam, not a source rewrite and not a global
+`io.open`/`os.getenv` patch. The web boot's remaining `fs_kv` shim is for
+the direct Codex auth keychain (auth.json r/w/rename/remove) and optional
+append-mode JSONL diagnostics; the headless integration script does not load
+that keychain and does not install it. See [../platform/shims.md](../platform/shims.md) for the verified call
+paths and the remaining IO-profile tradeoff.
 
 ## The decision
 

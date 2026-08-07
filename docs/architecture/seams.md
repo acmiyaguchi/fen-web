@@ -13,6 +13,8 @@ never a patch to fen-web's copy of core.
 |---|---|---|
 | HTTP backend | `fen/packages/util/src/fen/util/http/backend.fnl` — `{:request (fn [opts])}`, 11-line interface | `packages/bindings/fnl/fen/util/http/backends/fetch.fnl` over `host.fetch`; see [../bindings/fetch.md](../bindings/fetch.md) |
 | Session backend | `fen/packages/core/src/fen/core/extensions/register/session_backend.fnl` — `open/open-existing/append/close/load/find/list/latest` | Implemented: `:kv` backend over `host.kv`, issue #14 (closed); see [../platform/sessions.md](../platform/sessions.md) |
+| Config storage | `fen/packages/core/src/fen/core/storage/backend.fnl` — `read/write!` for resolved config documents | Implemented: `fen.core.storage.backend` is preloaded by `packages/runtime` over synchronous `host.kv`; `fen.core.settings` and `fen.core.llm.models` no longer need global filesystem patches |
+| Path/VFS probes | `fen/packages/util/src/fen/util/path/backend.fnl` — `getenv/stat/list-dir/pwd-physical` | Implemented: `fen.util.path.backend` is preloaded by `packages/runtime`; API-key `path.getenv` resolves through `env/apikey/<NAME>` and browser probes use safe fallbacks |
 | Tool registry | `fen/packages/core/src/fen/core/extensions/register/tool.fnl` — `api.register :tool` with `{:name :description :parameters :exposure :execute}` | Implemented: browser-native read/edit/write/find/grep/ls registered under builtin-tools' names, issue #4 (closed); see [../platform/tools.md](../platform/tools.md) |
 | Presenter | `fen/extensions/adapters/presenters/web/manifest.fnl` (existing server-side web presenter) — compositional panel/fragment model | Implemented: DOM presenter over `host.dom-apply` (`apps/web/fnl/fen_web/web`) reusing the same panel/fragment model, issue #6; see [../apps/web.md](../apps/web.md) and [../bindings/dom.md](../bindings/dom.md) |
 | Reload/loader | `fen/packages/core/src/fen/core/extensions/loader/reload.fnl`, `discover.fnl`, `manifest.fnl` | Reused with substitutions; see [../runtime/reload.md](../runtime/reload.md) |
@@ -22,18 +24,32 @@ never a patch to fen-web's copy of core.
 Seams are filled by pre-setting `package.loaded["<module>"]` from the
 runtime bootstrap before the rest of core requires it — not by patching
 the fen file. This is the same mechanism `fen.testing.stub-http!` uses
-(`fen/packages/testing/src/fen/testing/init.fnl:100`). The fetch backend
-Fennel source documents this explicitly at the top of
-`packages/bindings/fnl/fen/util/http/backends/fetch.fnl`.
+(`fen/packages/testing/src/fen/testing/init.fnl:100`). The v0.17 path and
+config-storage fulfillments use this mechanism directly:
+`fen.util.path.backend` and `fen.core.storage.backend` are selected before
+`fen.core.settings`/`fen.core.llm.models` load.
+
+The browser still has one deliberately narrower global shim for direct POSIX
+operations that are not v0.17 module seams: the web boot may install
+`fen_web.shims.fs_kv` for the direct Codex auth keychain's POSIX auth.json
+reads/writes and for durable JSONL diagnostics. Those globals have no v0.17
+module seam yet; the headless integration path does not load the keychain and
+does not install the shim.
 
 ## What is not a seam
 
-Native modules that fen assumes are always present (`fen.util.process`,
-`fen.util.random`, `os.time`, `io.open`-backed settings/model-key storage)
-are not registrable seams — they're hard dependencies core leaks past the
-HTTP/FS/tool boundaries. These need small preloaded-module shims rather
-than registrations; see [../platform/shims.md](../platform/shims.md)
-(issue #15).
+Native modules and POSIX helpers that are not selected by a browser seam
+(`fen.util.process`'s unsupported process operations, `io.popen`, shelling
+out, and the default POSIX path/storage backends) still remain host
+assumptions. They are fulfilled only where a real seam exists: process/clock,
+path, and config storage are preloaded by the runtime; browser tools and
+sessions use explicit kv bindings.
+
+The browser must not patch a core module's globals merely because the default
+backend uses them. The v0.17 storage/path migrations are the concrete example:
+`core/settings.fnl` and `core/llm/models.fnl` now go through their injected
+backends. The direct Codex auth keychain and optional diagnostic JSONL paths
+retain the `fs_kv` global compatibility shim described above.
 
 ## Upstream asks
 

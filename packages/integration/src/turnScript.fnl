@@ -15,7 +15,6 @@
 ;; reusable shim.
 
 (local api-factory (require :fen.core.extensions.loader.api))
-(local fs-kv (require :fen_web.shims.fs_kv))
 (local sessions-init (require :fen_web.sessions))
 (local tools-init (require :fen_web.tools))
 (local openai-completions (require :fen.extensions.provider_openai.openai_completions))
@@ -44,7 +43,6 @@
 ;; tags: test integration headless-turn
 (fn run [opts]
   (let [kv (. _G.__fen_host :kv)
-        _install (fs-kv.install! kv)
         api (api-factory.make-api :fen-web-integration-test nil {:privileged? true})
         _reg-provider (api.register :provider (openai-provider-spec))
         ;; Still pcall'd defensively (tool registration is not load-bearing

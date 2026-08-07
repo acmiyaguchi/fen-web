@@ -44,6 +44,7 @@
 (local agent-mod (require :fen.core.agent))
 (local events (require :fen.core.extensions.events))
 (local token-util (require :fen.util.tokens))
+(local path (require :fen.util.path))
 (local text (require :fen.util.text))
 (local trim (. text :trim))
 (local first-line (. text :first-line))
@@ -212,12 +213,12 @@
 
 (fn resolve-api-key [spec]
   ;; Resolve the key through fen's real credential seam: the provider's
-  ;; :api-key-var is looked up with os.getenv, which fen_web.shims.fs_kv maps
-  ;; to kv path env/apikey/<VAR> — exactly where the settings form stores it
-  ;; (docs/platform/shims.md). No plaintext key is marshalled through a JS
-  ;; global or duplicated in the VM.
+  ;; :api-key-var is looked up with fen.util.path.getenv, fulfilled by the
+  ;; runtime's path backend with kv path env/apikey/<VAR> — exactly where the
+  ;; settings form stores it (docs/platform/shims.md). No plaintext key is
+  ;; marshalled through a JS global or duplicated in the VM.
   (let [var-name (tostring (or (?. spec :api-key-var) :ANTHROPIC_API_KEY))
-        key (os.getenv var-name)]
+        key (path.getenv var-name)]
     (when (or (= key nil) (= (trim key) ""))
       (error (.. "fen_web.web.boot: no API key for " var-name
                  " — set it via the settings form (stored under env/apikey/"
@@ -237,6 +238,8 @@
                  "'; only 'anthropic' and 'openai-codex' are wired today "
                  "(see docs/apps/web.md)")))
     (let [kv (and _G.__fen_host _G.__fen_host.kv)
+          ;; Settings/models use the runtime's storage/path preloads directly;
+          ;; fs-kv remains for the direct Codex auth keychain and diagnostics.
           _install (fs-kv.install! kv)
           ;; First-load starter project (fen-web#9) is seeded atomically and
           ;; durably into the persistent store BEFORE this VM boots (JS side:
