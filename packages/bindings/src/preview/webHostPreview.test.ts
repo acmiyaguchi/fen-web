@@ -214,7 +214,7 @@ test("an RPC completes when the matching iframe window replies", () => {
 
   const poll = preview.rpcPoll(id);
   assert.equal(poll.done, true, "done after the iframe replies");
-  assert.deepEqual(poll.result, { ok: true, value: { count: 1 } });
+  assert.deepEqual(poll.result, { ok: true, value: '{"count":1}' });
 });
 
 test("SECURITY: a reply from a foreign window source is ignored", () => {
@@ -328,9 +328,9 @@ test("FakePreview has the same console drain and uncaught-error surface", () => 
   assert.deepEqual(fake.drainConsole(), []);
 });
 
-test("FakePreview records HTML + requests and resolves synchronously", () => {
+test("FakePreview records HTML + requests and pre-serializes RPC values", () => {
   const fake = new FakePreview((req) =>
-    req.method === "eval" ? { ok: true, value: 42 } : { ok: true },
+    req.method === "eval" ? { ok: true, value: { answer: 42 } } : { ok: true },
   );
   fake.setHtml("<p>page</p>");
   assert.equal(fake.html, "<p>page</p>");
@@ -338,6 +338,6 @@ test("FakePreview records HTML + requests and resolves synchronously", () => {
   const id = fake.rpcStart({ method: "eval", expr: "6*7" });
   const poll = fake.rpcPoll(id);
   assert.equal(poll.done, true);
-  assert.deepEqual(poll.result, { ok: true, value: 42 });
+  assert.deepEqual(poll.result, { ok: true, value: '{"answer":42}' });
   assert.equal(fake.requests[0].expr, "6*7");
 });

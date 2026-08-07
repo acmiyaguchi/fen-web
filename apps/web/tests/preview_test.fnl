@@ -31,6 +31,18 @@
 
 ;; A synchronous host.preview double: records set-html + rpc requests and
 ;; resolves each rpc immediately (done on the first poll), via a responder.
+;; Match FakePreview/WebHostPreview: arbitrary values are JSON text before
+;; rpc-result->tool receives them, so the test cannot accidentally hide the
+;; Wasmoon proxy boundary with a native table.
+(fn serialize-rpc-result [result]
+  (if (not result)
+      nil
+      (let [out (collect [k v (pairs result)] k v)]
+        (when (and (not= out.value nil)
+                   (not= (type out.value) :string))
+          (set out.value (json.encode out.value)))
+        out)))
+
 (fn make-preview [?responder]
   (let [responder (or ?responder (fn [_req] {:ok true}))
         h {:html nil :requests [] :results {} :next 1}]
@@ -43,7 +55,7 @@
              (tset h.results id (responder req))
              id)))
     (set h.preview_rpc_poll
-         (fn [id] {:done true :result (. h.results id)}))
+         (fn [id] {:done true :result (serialize-rpc-result (. h.results id))}))
     (set h.preview_rpc_dispose (fn [id] (tset h.results id nil)))
     (set h.console [])
     (set h.preview_console_drain
@@ -329,6 +341,7 @@
                   (tool-named :preview_fill (fn [_req] {:ok true :value {:filled true}}))
                   r (tool.execute {:selector "#name" :value "ada"} {} nil)]
               (assert.is_false r.is-error?)
+              (assert.are.equal "{\"filled\":true}" (text-of r))
               (assert.are.equal "#name" (. prev.requests 1 :selector))
               (assert.are.equal "ada" (. prev.requests 1 :value)))))
 

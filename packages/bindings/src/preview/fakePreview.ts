@@ -10,6 +10,7 @@ import {
   normalizePreviewConsoleEntry,
   PREVIEW_CONSOLE_MAX_ENTRIES,
 } from "./console.js";
+import { serializePreviewRpcResult } from "./webHostPreview.js";
 
 /** A synchronous, in-memory host.preview double for Node/off-DOM tests (the
  * way ScriptedFetch/FakeDom stand in for their real bindings). It records the
@@ -51,7 +52,7 @@ export class FakePreview implements HostPreview {
   }
 
   rpcPoll(id: number): PreviewPollResult {
-    return { done: true, result: this.results.get(id) };
+    return { done: true, result: serializePreviewRpcResult(this.results.get(id)) };
   }
 
   rpcDispose(id: number): void {

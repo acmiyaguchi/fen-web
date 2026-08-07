@@ -7,6 +7,7 @@ import {
   FetchPoller,
   normalizeOps,
   serializePreviewConsoleEntries,
+  serializePreviewRpcResult,
   type DomOp,
   type FetchPollResult,
   type FetchRequestOptions,
@@ -186,7 +187,13 @@ export function buildDemoHostTable(
     // polls (docs/bindings/preview.md).
     preview_set_html: (html: unknown) => deps.preview.setHtml(String(html)),
     preview_rpc_start: (req: unknown) => deps.preview.rpcStart(req as never),
-    preview_rpc_poll: (id: number) => deps.preview.rpcPoll(id),
+    // Arbitrary iframe payloads must cross Wasmoon as JSON text. The
+    // bindings serialize real/fake preview results, and this host seam also
+    // normalizes any injected HostPreview implementation before Lua sees it.
+    preview_rpc_poll: (id: number) => {
+      const poll = deps.preview.rpcPoll(id);
+      return { ...poll, result: serializePreviewRpcResult(poll.result) };
+    },
     preview_rpc_dispose: (id: number) => deps.preview.rpcDispose(id),
     // preview_console is synchronous by design: Lua drains whatever the
     // host has already received; JS never calls back into the VM. Return

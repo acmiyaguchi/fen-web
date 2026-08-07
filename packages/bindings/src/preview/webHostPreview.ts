@@ -17,6 +17,17 @@ interface RpcState {
   result?: PreviewPollResult["result"];
 }
 
+/** Keep arbitrary iframe RPC payloads out of the Wasmoon JSON encoder. Strings
+ * are already the tool-facing representation (and must not gain JSON quotes);
+ * every other present value is serialized before the poll result leaves the
+ * host-side preview binding. */
+export function serializePreviewRpcResult(
+  result: PreviewPollResult["result"],
+): PreviewPollResult["result"] {
+  if (!result || typeof result.value === "string" || result.value === undefined) return result;
+  return { ...result, value: JSON.stringify(result.value) };
+}
+
 /** Minimal structural views of the DOM/window pieces WebHostPreview touches,
  * so it can be driven by a fake document/window in Node tests (there is no
  * jsdom in this repo) as well as the real browser globals. */
@@ -122,7 +133,7 @@ export class WebHostPreview implements HostPreview {
   rpcPoll(id: number): PreviewPollResult {
     const state = this.requests.get(id);
     if (!state) throw new Error(`WebHostPreview: unknown rpc id ${id}`);
-    return { done: state.done, result: state.result };
+    return { done: state.done, result: serializePreviewRpcResult(state.result) };
   }
 
   rpcDispose(id: number): void {

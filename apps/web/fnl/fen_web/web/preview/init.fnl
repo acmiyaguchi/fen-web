@@ -100,10 +100,15 @@
   (let [marker (when ?surface-errors? (uncaught-marker))]
     (if (not r.ok)
         (util.err (.. (or r.error "preview RPC failed") (or marker "")))
-        (let [text (if (= (type r.value) :string)
-                       r.value
-                       (json.encode (if (= r.value nil) json.null r.value)))]
-          (util.ok (.. text (or marker "")))))))
+        ;; Host preview bindings serialize every non-string value before it
+        ;; crosses Wasmoon. A native string is therefore already the exact
+        ;; tool-facing JSON/text result; nil is the legacy absent-value shape.
+        ;; Reject anything else rather than handing proxy userdata to cjson.
+        (= (type r.value) :string)
+        (util.ok (.. r.value (or marker "")))
+        (= r.value nil)
+        (util.ok (.. "null" (or marker "")))
+        (util.err "preview RPC host returned non-JSON data"))))
 
 (local console-tool
   {:name :preview_console
