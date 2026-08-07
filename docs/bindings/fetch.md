@@ -25,12 +25,19 @@ interface FetchRequestOptions {
   method: string; url: string; headers?: Record<string,string>;
   body?: string;  // Lua-byte-string encoded; see bytes.ts
   timeoutMs?: number; connectTimeoutMs?: number; idleTimeoutMs?: number;
-  onChunk?: (bytes: string) => void;
+  onChunk?: (bytes: string) => void | PromiseLike<void>;
   accumulateBody?: boolean;  // default true; false retains only ACCUMULATE_BODY_CAP bytes
 }
 const ACCUMULATE_BODY_CAP = 65536;  // mirrors native FEN_ERROR_BODY_CAP
-type FetchResult = { status: number; headers: Record<string,string>; body?: string }
+type FetchResult = { status: number; headers: Record<string,string>; body: string }
                   | { error: string };
+// Backpressure contract: when onChunk returns a promise the host MUST await
+// it before delivering the next chunk. A host that ignores it and enqueues
+// re-entrantly gets a synchronous FetchPollerBackpressureError — loud
+// failure, never silent chunk loss. `body` is required on success: the host
+// owns the single accumulated copy (full body, or the capped head when
+// accumulateBody is false). The idle watchdog measures server silence only;
+// time parked on consumer backpressure never counts toward idleTimeoutMs.
 ```
 
 Fennel (`fetch.fnl` `translate`) — kebab-case, mirroring
@@ -84,9 +91,10 @@ is `true`. When `false`, `webFetch.ts` still streams every chunk through
 `ACCUMULATE_BODY_CAP` (65536 bytes) — instead of the full response,
 matching the native backend's `FEN_ERROR_BODY_CAP` contract; the retained
 head is for error diagnostics, not a substitute buffered body. The
-Fennel backend (`fetch.fnl`) must not (and does not) reconstruct a full
-body from `on-chunk` chunks when `accumulate-body?` is false — it passes
-`p.body` (the host's bounded head) straight through.
+Fennel backend (`fetch.fnl`) never reconstructs a body from `on-chunk`
+chunks in either mode — it passes `p.body` straight through (the host's
+full accumulation, or the bounded head when `accumulate-body?` is false),
+so the body is held exactly once, host-side.
 
 ## Anthropic direct-browser CORS header (interim)
 

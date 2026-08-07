@@ -93,9 +93,17 @@ export class WebHostFetch implements HostFetch {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          resetIdle();
           const bytes = toLuaBytes(value);
-          opts.onChunk?.(bytes);
+          // Poll-based consumers may return a promise when their pending
+          // queue is full. Awaiting it keeps the reader from pulling the
+          // entire response ahead of Lua's next poll. The idle watchdog
+          // measures SERVER silence only: pause it while parked on the
+          // consumer (a hidden tab pauses rAF polling for arbitrarily long;
+          // that must buffer, not kill the turn) and re-arm before the next
+          // read.
+          clearIdle();
+          await opts.onChunk?.(bytes);
+          resetIdle();
           if (accumulateBody) {
             bodyParts.push(bytes);
           } else if (bodyLen < ACCUMULATE_BODY_CAP) {

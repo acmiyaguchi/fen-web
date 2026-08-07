@@ -4,7 +4,13 @@ export { toLuaBytes, fromLuaBytes } from "./fetch/bytes.js";
 export { WebHostFetch } from "./fetch/webFetch.js";
 export { ScriptedFetch } from "./fetch/stubFetch.js";
 export type { ScriptedResponse } from "./fetch/stubFetch.js";
-export { FetchPoller } from "./fetch/pollProtocol.js";
+export {
+  FetchPoller,
+  FetchPollerBackpressureError,
+  FetchPollerDisposedError,
+  MAX_PENDING_BYTES,
+  MAX_PENDING_CHUNKS,
+} from "./fetch/pollProtocol.js";
 export type { FetchPollResult } from "./fetch/pollProtocol.js";
 
 export type { HostKv } from "./kv/types.js";

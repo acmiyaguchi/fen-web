@@ -112,29 +112,27 @@
   (when (not opts.yield)
     (request-fetch-error
       "requires cooperative mode (opts.yield) — blocking browser fetch would hard-hang the tab; see this file's header comment"))
+  ;; The host owns response-body accumulation. Keeping the body there means
+  ;; the transport returns the same result to direct JS callers, while this
+  ;; poll loop only forwards chunks to the streaming sink. Do not rebuild
+  ;; p.body here: doing so duplicates the full response in a Lua table/string
+  ;; for every accumulate-body? true request. With accumulate-body? false, the
+  ;; host returns only its bounded diagnostic head and the poller queue remains
+  ;; bounded by backpressure.
   (let [h (host)
-        id (h.fetch_start (translate opts))
-        ;; Matches fen.util.http.init's documented default: accumulate the
-        ;; body unless the caller explicitly opts out (streaming callers
-        ;; pass false). When false, the host already caps what it hands
-        ;; back in p.body (a bounded head for error diagnostics, matching
-        ;; the native FEN_ERROR_BODY_CAP contract) — this backend must not
-        ;; reconstruct a full body from chunks in that mode.
-        accumulate? (if (= opts.accumulate-body? nil) true opts.accumulate-body?)
-        body-parts []]
+        id (h.fetch_start (translate opts))]
     (var result nil)
     (while (not result)
       (let [p (h.fetch_poll id)]
         (each [_ chunk (ipairs (or p.chunks []))]
-          (when opts.on-chunk (opts.on-chunk chunk))
-          (when accumulate? (table.insert body-parts chunk)))
+          (when opts.on-chunk (opts.on-chunk chunk)))
         (if p.done
             (do
               (set result (if p.error
                               {:error p.error}
                               {:status p.status
                                :headers (or p.headers {})
-                               :body (if accumulate? (table.concat body-parts) p.body)}))
+                               :body (or p.body "")}))
               (h.fetch_dispose id))
             (opts.yield))))
     result))

@@ -48,6 +48,15 @@
             (assert.are.same [1] host._state.dispose-calls)))
         (set _G.__fen_host nil)))
 
+    (it "defaults a malformed host success that omits body to an empty string"
+      (fn []
+        (let [fetch (require :fen.util.http.backends.fetch)
+              host (make-fake-host [{:chunks [] :done true :status 200 :headers {}}])]
+          (set _G.__fen_host host)
+          (let [result (fetch.request {:method "GET" :url "https://example.com" :yield (fn [])})]
+            (assert.are.equal "" result.body))
+          (set _G.__fen_host nil))))
+
     (it "blocking mode (no opts.yield) errors clearly instead of hanging"
       (fn []
         (let [fetch (require :fen.util.http.backends.fetch)
