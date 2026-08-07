@@ -62,8 +62,8 @@ export async function bootDemoInBrowser(
   // Dev-only Codex credential seed: the Vite dev server bridges the local
   // fen CLI's ~/.config/fen/auth.json at /__fen/codex-auth (vite.config.ts).
   // Seed it into the exact kv path openai_codex_keychain computes in-VM —
-  // the fs_kv getenv allowlist returns nil for HOME/XDG_CONFIG_HOME, so
-  // `(.. (or HOME "/") "/.config")` yields the double-slash path. Refreshed
+  // fs_kv's patched os.getenv returns nil (including HOME/XDG_CONFIG_HOME),
+  // so `(.. (or HOME "/") "/.config")` yields the double-slash path. Refreshed
   // on every boot so a token rotated by the CLI wins over a stale copy.
   if (import.meta.env.DEV) {
     const res = await fetch("/__fen/codex-auth").catch(() => undefined);

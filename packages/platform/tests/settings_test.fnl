@@ -1,34 +1,28 @@
-;; fen.core.settings round-trip against the kv-backed io/os shim
-;; (fen_web.shims.fs-kv), per fen-web#15.
+;; fen.core.settings through fen v0.17's injected storage backend seam.
+;; The browser runtime fulfills fen.core.storage.backend directly; no global
+;; io/os patch is involved in this test.
 
 (local support (require :support))
-(local fs-kv (require :fen_web.shims.fs_kv))
 
-(describe "fen.core.settings over fs-kv"
+(describe "fen.core.settings over storage backend"
   (fn []
-    (var snap nil)
     (var kv nil)
     (var settings nil)
 
     (before_each
       (fn []
-        (set snap (fs-kv.snapshot-globals))
         (set kv (support.make-kv))
-        ;; settings.fnl is a plain (not reloadable-cached) module -- fresh
-        ;; require each time so no cross-test module-level state leaks. The
-        ;; (re)require must happen against the *real* io.open, before
-        ;; fs-kv.install! -- Busted's Fennel searcher reads the .fnl source
-        ;; itself off disk via io.open, so installing the kv shim first
-        ;; would make module loading try to fetch settings.fnl's own
-        ;; source out of the (empty) test kv instead of the filesystem.
+        (support.install-kv-seams! kv)
         (tset package.loaded :fen.core.settings nil)
-        (set settings (require :fen.core.settings))
-        (fs-kv.install! kv)))
+        ;; Require the real fen module after the backend preload is installed.
+        ;; Its source still comes from Busted's real filesystem searcher, but
+        ;; the module's storage calls resolve through the injected backend.
+        (set settings (require :fen.core.settings))))
 
     (after_each
       (fn []
-        (fs-kv.uninstall! snap)
-        (tset package.loaded :fen.core.settings nil)))
+        (tset package.loaded :fen.core.settings nil)
+        (support.clear-kv-seams!)))
 
     (it "loads an empty record when nothing has been saved"
       (fn []
@@ -43,7 +37,7 @@
           (assert.are.equal :anthropic s.default-provider)
           (assert.are.equal :claude-sonnet s.default-model))))
 
-    (it "persists the write via the kv store, not just in-process state"
+    (it "persists the write via the injected storage backend"
       (fn []
         (settings.set-defaults! :anthropic :claude-sonnet)
         (let [raw (kv.get (settings.config-path))]
@@ -58,10 +52,10 @@
           (assert.is_false wrote-second?)
           (assert.are.equal :openai (. (settings.load) :default-provider)))))
 
-    (it "removing the underlying key (os.remove) makes settings load empty again"
+    (it "removing the underlying storage value makes settings load empty again"
       (fn []
         (settings.set-defaults! :anthropic :claude-sonnet)
-        (os.remove (settings.config-path))
+        (kv.delete (settings.config-path))
         (let [s (settings.load)]
           (assert.is_nil s.default-provider))))
 

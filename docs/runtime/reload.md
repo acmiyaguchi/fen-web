@@ -3,7 +3,8 @@
 Decided alongside module loading in
 [issue #16](https://github.com/acmiyaguchi/fen-web/issues/16) (closed).
 `fen/packages/core/src/fen/core/extensions/loader/reload.fnl` is reused,
-not rewritten, but needs three substitutions and one shim.
+not rewritten, but needs three substitutions plus the v0.17 path/clock seam
+fulfillments already supplied by `packages/runtime`.
 
 ## Scope
 
@@ -13,7 +14,7 @@ not rewritten, but needs three substitutions and one shim.
 see [module-loading.md](module-loading.md). Full-tree reload of the
 reloadable scope stays available as a ~1.5s operation.
 
-## The three substitutions + one shim
+## The three substitutions + v0.17 seams
 
 1. **`compiler.fnl` swap** — in-VM `compileString` honoring the
    `{:status :outputs}` contract, instead of shelling out.
@@ -24,10 +25,11 @@ reloadable scope stays available as a ~1.5s operation.
    through the custom searcher (see [module-loading.md](module-loading.md))
    and would force a full reload every time. Replace with `host.kv`
    versions/etags.
-4. **`FEN_DEV_PATH`/`dev-overlay-fnl?` shim** —
-   `reload.fnl:133` gates candidate discovery on `os.getenv`, which
-   returns `nil` in-VM, silently making the browser compiler dead code.
-   Needs a shim that surfaces a dev-path equivalent from the host.
+4. **`FEN_DEV_PATH`/`dev-overlay-fnl?` path seam** —
+   `reload.fnl:133` now asks `fen.util.path.getenv`, not `os.getenv` directly.
+   The browser's preloaded `fen.util.path.backend` supplies the host-visible
+   value (or nil), so the compiler path is an explicit backend fulfillment,
+   not a global environment patch.
 
 ## Follow-up (not blocking)
 
@@ -40,11 +42,18 @@ Persisted chunk cache in `host.kv`, keyed on
 as [issue #19](https://github.com/acmiyaguchi/fen-web/issues/19); not yet
 implemented.
 
-## Related shim
+## Related v0.17 seams
 
-`fen.util.process.monotonic-ms` must come from a real wall clock
-(`performance.now` via host), not `os.clock` — reload diagnostics use it.
-Tracked under [../platform/shims.md](../platform/shims.md) (issue #15).
+- `fen.util.clock.monotonic-ms` must come from a real wall clock
+  (`performance.now` via `fen.util.clock.backend`), not `os.clock` — reload
+  diagnostics use it.
+- `fen.util.path.getenv` is the host-facing environment seam used by the
+  dev-overlay gate. The browser runtime fulfills it directly; `fs_kv`'s old
+  `os.getenv` patch is not involved.
+
+These are tracked under [../platform/shims.md](../platform/shims.md) (issue
+#15). The `fs_kv` direct-IO shim is likewise separate from reload module
+discovery and config storage.
 
 See also: [module-loading.md](module-loading.md),
 [../architecture/seams.md](../architecture/seams.md).

@@ -19,11 +19,12 @@ Boot sequence: create a wasmoon `LuaEngine` → set `__fen_host` (caller's
 `host` merged over `defaultHost()`, which supplies `now_ms:
 performance.now()`) → load the vendored Fennel 1.6.0 source and register
 it under `package.preload["fennel"]` → install built-in preloads
-(`cjson`, `fen.util.process`, see below) plus any caller `preload`
-entries (caller wins on key collision) → insert the custom source
-searcher at `package.searchers[2]` (after the preload searcher, before
-the normal path searchers, so preloads always win and the searcher only
-fires on a miss).
+(`cjson`, `fen.util.process`, `fen.util.clock.backend`,
+`fen.util.path.backend`, and `fen.core.storage.backend`, see below) plus any
+caller `preload` entries (caller wins on key collision) → insert the custom
+source searcher at `package.searchers[2]` (after the preload searcher, before
+the normal path searchers, so preloads always win and the searcher only fires
+on a miss).
 
 `opts.sources` is a `SourceLookup`: either a `Map<string, FenSource>`
 (`{lang: "fnl"|"lua", src}`) or a resolver function — Node tests build the
@@ -93,28 +94,29 @@ returns `nil`; `os.getenv("HOME")` reads back the synthetic
 `/home/web_user`, not the actual `$HOME`. This is not a browser-only
 constraint that Node somehow escapes: wasmoon's WASM Lua build never wires
 libc's file/env syscalls to the host process regardless of what's hosting
-the VM. `createFenRuntime` does not paper over this or claim otherwise —
-`fen.util.process`'s `monotonic-ms`/`sleep-ms`/`setenv!` all deliberately
-route through `__fen_host`/no-ops rather than real `os` calls, for exactly
-this reason.
+the VM. The v0.17 browser path is now explicit rather than a global workaround:
+`fen.util.path.backend` supplies path probes and `path.getenv`, while
+`fen.core.storage.backend` supplies config-document reads/writes. The runtime
+preloads both modules before core requires them, and `fen.core.settings` /
+`fen.core.llm.models` therefore never need `io.open`, `os.remove`,
+`os.rename`, or `os.getenv` patches. The web boot still installs
+[`fs_kv`](../platform/shims.md) for the direct Codex auth keychain, which has
+not acquired a module seam and reads/writes auth.json through POSIX globals;
+the same shim also keeps JSONL diagnostics in kv. The headless integration
+script does not install it because it does not load the Codex keychain.
 
-This is why the [`fs_kv` platform shim](../platform/shims.md) exists for
-`fen.core.settings`/`fen.core.llm.models` — those modules' `io.open`/
-`os.getenv` calls are pointed at `host.kv` instead of a filesystem that,
-in-VM, wouldn't be real anyway. It's also why the live-Codex harness
-([integration.md](../integration.md)) — which needs `openai_codex_keychain.fnl`'s
-*real*, unmodified `io.open` reads of `~/.config/fen/auth.json` to work —
-has to reach into wasmoon's internal MEMFS object and mount real bytes
-onto the VM's virtual path rather than relying on any host passthrough.
-First-class mount support (`FenRuntimeOptions` growing a `mounts`/
-`environmentVariables` knob wired to wasmoon's `LuaFactory.mountFile`/
-`environmentVariables`) is tracked as
+`createFenRuntime` does not paper over the remaining POSIX APIs or claim host
+passthrough. The live-Codex harness ([integration.md](../integration.md)) —
+which needs `openai_codex_keychain.fnl`'s *real*, unmodified `io.open` reads
+of `~/.config/fen/auth.json` to work — still reaches into wasmoon's internal
+MEMFS object and mounts real bytes onto the VM's virtual path rather than
+relying on a host passthrough. First-class mount support
+(`FenRuntimeOptions` growing a `mounts`/`environmentVariables` knob wired to
+wasmoon's `LuaFactory.mountFile`/`environmentVariables`) is tracked as
 [issue #18](https://github.com/acmiyaguchi/fen-web/issues/18) — not yet
-implemented; today, mounting is the integration package's own workaround,
-not a runtime feature. See also
-[platform/shims.md](../platform/shims.md#host-io-profiles) for the two
-mutually-exclusive IO strategies (`fs_kv` shims vs. real mounted files)
-this split implies.
+implemented; today, mounting is the integration package's own workaround.
+See also [platform/shims.md](../platform/shims.md#host-io-profiles) for the
+remaining, deliberately smaller IO-profile distinction.
 
 ## Reentrancy limitation
 
@@ -157,8 +159,8 @@ underlying hazard as `fen.util.process`'s documented `sleep-ms` no-op
 
 ## Built-in preload stubs
 
-Two names are always preloaded (caller `preload` entries with the same
-key override them):
+The built-in names below are always preloaded (caller `preload` entries with
+the same key override them):
 
 - **`cjson`** — `packages/runtime/vendor/cjson_stub.lua`, a pure-Lua
   JSON codec, deliberately *not* a JS `JSON.parse`/`JSON.stringify`
@@ -179,18 +181,23 @@ key override them):
   reproduce on desktop fen against real lua-cjson too — filed upstream as
   [fen#482](https://github.com/acmiyaguchi/fen/issues/482).
 - **`fen.util.process`** — `PROCESS_STUB_LUA` in
+  `packages/runtime/src/stubs.ts`. Process operations that need an OS fail
+  clearly in the browser; `read-pipe-close` returns `""` and `setenv!` is a
+  no-op. The field list mirrors fen v0.17's process export.
+- **`fen.util.clock.backend`** — `CLOCK_STUB_LUA` in
   `packages/runtime/src/stubs.ts`. `monotonic-ms` calls
-  `__fen_host.now_ms()` (wired to `performance.now()` by
-  `defaultHost()`), matching the #16 decision item that reload
-  diagnostics need a real wall clock, not `os.clock`. `sleep-ms` is a
-  no-op (nothing to cooperatively block on in-VM; a caller busy-looping
-  on it for real elapsed delay will hot-spin — fine for fen's current
-  best-effort backoff callers, but would need a `setTimeout`-backed async
-  sleep if that assumption changes). `run-captured`/`start-captured`/
-  `read-pipe-coop` error clearly as unsupported; `read-pipe-close`
-  returns `""`; `setenv!` is a no-op. Field list mirrors
-  `fen/packages/util/src/fen/util/process.fnl:420-426` exactly — no
-  invented fields.
+  `__fen_host.now_ms()` (wired to `performance.now()` by `defaultHost()`),
+  while `sleep-ms` is a cooperative no-op. Reload diagnostics therefore use
+  a real wall clock without reaching for `os.clock`.
+- **`fen.util.path.backend`** — `PATH_BACKEND_STUB_LUA` in
+  `packages/runtime/src/stubs.ts`. Browser path probes return safe virtual
+  fallbacks, and API-key-shaped `path.getenv` names resolve through
+  `host.kv` at `env/apikey/<NAME>`; a host can override an environment lookup
+  with `host.path_getenv`.
+- **`fen.core.storage.backend`** — `STORAGE_BACKEND_STUB_LUA` in
+  `packages/runtime/src/stubs.ts`. Its `read`/`write!` methods use the
+  synchronous `__fen_host.kv` view, so settings.json and models.json do not
+  select fen's POSIX default backend.
 
 ## Browser bundling
 

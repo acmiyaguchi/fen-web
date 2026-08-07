@@ -117,7 +117,8 @@ function starterFilesFromDisk(): Record<string, string> {
 }
 
 /** A table-backed synchronous kv (the SyncKv contract) seeded with the API
- * key under the exact path the fs_kv shim maps `os.getenv("<VAR>")` to. */
+ * key under the exact path the `fen.util.path.backend` stub serves for
+ * in-VM `path.getenv("<VAR>")`. */
 function makeSyncKv(backing?: Map<string, string>) {
   const store = backing ?? new Map<string, string>();
   store.set("env/apikey/ANTHROPIC_API_KEY", KEY);
