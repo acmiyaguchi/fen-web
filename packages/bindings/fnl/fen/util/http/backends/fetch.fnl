@@ -37,7 +37,7 @@
 ;;      host.fetch and immediately returns a request id (no blocking).
 ;;   2. This backend loop calls `__fen_host.fetch_poll(id)` repeatedly,
 ;;      each call draining any chunks buffered since the last poll and
-;;      reporting {:chunks :done :status :headers :body :error}.
+;;      reporting {:chunks :done :status :headers-json :body :error}.
 ;;   3. Between polls (while not done) it calls opts.yield, so the VM
 ;;      cooperates instead of busy-looping the poll from inside a single
 ;;      Lua call.
@@ -57,6 +57,8 @@
 ;; — e.g. __fen_host.fetch_await(id) backed by a blocking sleep/poll
 ;; bridge in the runtime package — but that needs the runtime's coroutine
 ;; bridge to exist first; erroring now beats a frozen tab.)
+
+(local json (require :fen.util.json))
 
 (fn request-fetch-error [msg]
   (error (.. "fen.util.http.backends.fetch: " msg)))
@@ -103,6 +105,23 @@
    ;; full unbounded body when the caller only wants a diagnostics head.
    :accumulateBody (if (= opts.accumulate-body? nil) true opts.accumulate-body?)})
 
+(fn response-headers [poll]
+  ;; JS objects arrive in wasmoon as js_proxy userdata. Decode the JSON text
+  ;; staged by the web host into a real Lua table before fen's retry helpers
+  ;; inspect it with pairs() for Retry-After headers. A malformed/absent map is
+  ;; equivalent to no retry hint, but must never turn an HTTP error into a VM
+  ;; type error.
+  (let [raw poll.headers-json]
+    (if raw
+        (let [(ok? headers) (pcall json.decode raw)]
+          (if (and ok? (= (type headers) :table)) headers {}))
+        ;; Keep the pure-Fennel test/embedding host contract compatible. A
+        ;; native table is already safe; a wasmoon js_proxy is deliberately
+        ;; ignored because pairs() cannot consume it.
+        (= (type poll.headers) :table)
+        poll.headers
+        {})))
+
 ;; @doc fen.util.http.backends.fetch.request
 ;; kind: function
 ;; signature: (request opts) -> {:status :body :headers}|{:error}
@@ -131,7 +150,7 @@
               (set result (if p.error
                               {:error p.error}
                               {:status p.status
-                               :headers (or p.headers {})
+                               :headers (response-headers p)
                                :body (or p.body "")}))
               (h.fetch_dispose id))
             (opts.yield))))

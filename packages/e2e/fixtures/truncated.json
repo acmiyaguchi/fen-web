@@ -1,6 +1,9 @@
 {
   "name": "truncated provider stream",
   "turns": [
+    { "request": { "userText": "Trigger a truncated stream." }, "response": { "fixture": "truncated.sse", "contentType": "text/event-stream", "headers": { "retry-after-ms": "0" } } },
+    { "request": { "userText": "Trigger a truncated stream." }, "response": { "fixture": "truncated.sse", "contentType": "text/event-stream", "headers": { "retry-after-ms": "0" } } },
+    { "request": { "userText": "Trigger a truncated stream." }, "response": { "fixture": "truncated.sse", "contentType": "text/event-stream", "headers": { "retry-after-ms": "0" } } },
     { "request": { "userText": "Trigger a truncated stream." }, "response": { "fixture": "truncated.sse", "contentType": "text/event-stream", "headers": { "retry-after-ms": "0" } } }
   ]
 }

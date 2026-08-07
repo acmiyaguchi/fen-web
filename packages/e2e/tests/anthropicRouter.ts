@@ -186,7 +186,7 @@ export class ScriptedAnthropicRouter {
       await route.fulfill({
         status: response.status ?? 200,
         contentType: response.contentType ?? "text/event-stream",
-        headers: response.headers,
+        headers: { ...response.headers, "Access-Control-Expose-Headers": "retry-after-ms" },
         body: bodyText,
       });
     } catch (error) {

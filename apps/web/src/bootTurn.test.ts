@@ -190,6 +190,25 @@ function anthropicToolUseSse(name: string, id = "call-1"): string[] {
   ];
 }
 
+function truncatedSse(): string[] {
+  return readFileSync(path.join(repoRoot, "packages", "e2e", "fixtures", "truncated.sse"), "utf8")
+    .trimEnd()
+    .split("\n\n")
+    .map((frame) => `${frame}\n\n`);
+}
+
+function enqueueProviderRetries(scripted: ScriptedFetch, response: {
+  status: number;
+  headers?: Record<string, string>;
+  chunks: string[];
+}): void {
+  // Keep this at retry.fnl DEFAULT-MAX-ATTEMPTS (4), including the initial
+  // request, so every retry is scripted and the regression tests the final
+  // provider error rather than mock-network exhaustion. AGENT_FENNEL_RETRY=0
+  // would collapse the attempts to one.
+  for (let attempt = 0; attempt < 4; attempt += 1) scripted.enqueue(response);
+}
+
 function transcriptText(dom: FakeDom): string {
   return dom
     .childIds("fen-transcript")
@@ -368,6 +387,141 @@ test("bootDemo drives the demo presenter through one Anthropic turn end to end",
   await runUntil(() => stopped, 3000);
   await stopPromise;
   assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
+});
+
+test("bootDemo preserves an HTTP 429 provider error in the transcript and diagnostics", async () => {
+  const scripted = new ScriptedFetch();
+  enqueueProviderRetries(scripted, {
+    status: 429,
+    headers: { "content-type": "application/json", "retry-after-ms": "0" },
+    chunks: ['{"type":"rate_limit_error","message":"node e2e rate limit"}'],
+  });
+  const dom = new FakeDom("fen-app");
+  const diagnostics = new DiagnosticsBuffer();
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  let fatal: unknown;
+  // Timestamp each provider attempt so the retry-after assertion measures
+  // only the retry DELAYS, not VM boot/pump overhead (which is load-
+  // dependent and blew a whole-turn wall-clock budget under parallel CI).
+  const attemptTimes: number[] = [];
+  const timedFetch: HostFetch = {
+    fetch(opts: FetchRequestOptions): Promise<FetchResult> {
+      attemptTimes.push(Date.now());
+      return scripted.fetch(opts);
+    },
+  };
+  const session = await bootDemo(
+    { provider: "anthropic", model: "claude-haiku-4-5" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(),
+      dom,
+      preview: new FakePreview(),
+      fetch: timedFetch,
+      schedule,
+      diagnostics,
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "presenter should boot before the provider error");
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "Trigger a rate limit." } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await drainTasks(tasks, () => transcriptText(dom).includes("node e2e rate limit"), 20_000);
+  assert.equal(attemptTimes.length, 4, "fen's default retry policy is 4 attempts");
+  // With retry-after-ms:0 honored, inter-attempt gaps are pump latency only.
+  // Jittered backoff (the headers-dropped regression) draws from caps of
+  // 1000/2000/4000ms — its expected gap sum is ~3.5s, so a 2.5s ceiling on
+  // the SUM of gaps distinguishes the two without being load-fragile.
+  const gapSum = attemptTimes
+    .slice(1)
+    .reduce((sum, tms, i) => sum + (tms - attemptTimes[i]), 0);
+  assert.ok(
+    gapSum < 2_500,
+    `retry-after-ms=0 should avoid jittered backoff; retry gaps summed to ${gapSum}ms`,
+  );
+
+  const transcript = transcriptText(dom);
+  assert.match(transcript, /HTTP 429/);
+  assert.match(transcript, /node e2e rate limit/);
+  assert.equal(fatal, undefined, "a provider error should remain a transcript error, not a fatal boot error");
+  assert.ok(
+    diagnostics.recentEvents.some(
+      (event) =>
+        event.kind === "error" &&
+        event.summary.includes("HTTP 429") &&
+        event.summary.includes("node e2e rate limit"),
+    ),
+    "the provider error should reach the diagnostics ring",
+  );
+
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await drainTasks(tasks, () => stopped);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after the provider error turn");
+});
+
+test("bootDemo preserves an incomplete-stream provider error in the transcript and diagnostics", async () => {
+  const scripted = new ScriptedFetch();
+  enqueueProviderRetries(scripted, {
+    status: 200,
+    headers: { "content-type": "text/event-stream", "retry-after-ms": "0" },
+    chunks: truncatedSse(),
+  });
+  const dom = new FakeDom("fen-app");
+  const diagnostics = new DiagnosticsBuffer();
+  const tasks: (() => void)[] = [];
+  const schedule = (fn: () => void) => void tasks.push(fn);
+  let fatal: unknown;
+  const session = await bootDemo(
+    { provider: "anthropic", model: "claude-haiku-4-5" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(),
+      dom,
+      preview: new FakePreview(),
+      fetch: scripted,
+      schedule,
+      diagnostics,
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "presenter should boot before the provider error");
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "Trigger a truncated stream." } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await drainTasks(tasks, () => transcriptText(dom).includes("stream ended without a completion event"), 20_000);
+
+  const transcript = transcriptText(dom);
+  assert.match(transcript, /stream ended without a completion event/);
+  assert.equal(fatal, undefined, "an incomplete stream should remain a transcript error, not a fatal boot error");
+  assert.ok(
+    diagnostics.recentEvents.some(
+      (event) =>
+        event.kind === "error" && event.summary.includes("stream ended without a completion event"),
+    ),
+    "the incomplete-stream error should reach the diagnostics ring",
+  );
+
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await drainTasks(tasks, () => stopped);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after the incomplete-stream turn");
 });
 
 test("bootDemo preview_console crosses the real wasmoon boundary as JSON text", async () => {

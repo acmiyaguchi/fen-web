@@ -137,34 +137,31 @@ test("copies diagnostics with the API key scrubbed and the credential warning pr
 });
 
 test.describe("provider error fixtures", () => {
-  // The browser reaches the error renderer, but currently exposes a
-  // `null.then` agent-task error instead of preserving HTTP 429. Accept the
-  // visible fallback while keeping either the intended provider detail or
-  // this known app bug observable until the error path is corrected upstream.
   test("renders a 429 response as a visible transcript error", async ({ page }) => {
+    // rate-limit.json repeats the response four times to match retry.fnl's
+    // DEFAULT-MAX-ATTEMPTS; AGENT_FENNEL_RETRY=0 would collapse attempts to one.
     const router = new ScriptedAnthropicRouter(page, "rate-limit.json");
     await router.install();
     await startWithFakeKey(page);
 
     await submitPrompt(page, "Trigger a rate limit.");
-    // TODO(#65): drop the `agent task:` alternation once the error path
-    // preserves provider detail — until then this assertion cannot
-    // distinguish a 429 from any other error.
-    await expect(page.locator("#fen-transcript .style-error")).toContainText(/HTTP 429|agent task:/, {
-      timeout: 20_000,
-    });
+    await expect(page.locator("#fen-transcript .style-error")).toContainText(
+      /HTTP 429[\s\S]*e2e rate limit/,
+      { timeout: 20_000 },
+    );
     await router.assertComplete();
   });
 
   test("renders a truncated stream as a visible incomplete-stream error", async ({ page }) => {
+    // truncated.json repeats the response four times to match retry.fnl's
+    // DEFAULT-MAX-ATTEMPTS; AGENT_FENNEL_RETRY=0 would collapse attempts to one.
     const router = new ScriptedAnthropicRouter(page, "truncated.json");
     await router.install();
     await startWithFakeKey(page);
 
     await submitPrompt(page, "Trigger a truncated stream.");
     await expect(page.locator("#fen-transcript .style-error")).toContainText(
-      // TODO(#65): drop the `agent task:` alternation (see the 429 test).
-      /stream ended without a completion event|agent task:/,
+      "stream ended without a completion event",
       { timeout: 20_000 },
     );
     await router.assertComplete();

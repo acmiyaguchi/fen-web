@@ -57,6 +57,20 @@
             (assert.are.equal "" result.body))
           (set _G.__fen_host nil))))
 
+    (it "decodes headers-json into a native table for retry hints"
+      (fn []
+        (let [fetch (require :fen.util.http.backends.fetch)
+              host (make-fake-host
+                     [{:chunks [] :done true :status 429
+                       :headers-json "{\"retry-after-ms\":\"0\",\"content-type\":\"application/json\"}"
+                       :body "rate limited"}])]
+          (set _G.__fen_host host)
+          (let [result (fetch.request {:method "GET" :url "https://example.com" :yield (fn [])})]
+            (assert.are.equal "table" (type result.headers))
+            (assert.are.equal "0" (. result.headers "retry-after-ms"))
+            (assert.are.equal "application/json" (. result.headers "content-type")))
+          (set _G.__fen_host nil))))
+
     (it "blocking mode (no opts.yield) errors clearly instead of hanging"
       (fn []
         (let [fetch (require :fen.util.http.backends.fetch)

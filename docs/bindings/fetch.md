@@ -115,8 +115,15 @@ host-keyed special-case is deleted. Covered by
 
 ## Poll protocol and cooperative-only mode
 
-See [host-protocol.md](host-protocol.md) for the full `fetch_start`/
-`fetch_poll`/`fetch_dispose` protocol. Poll bridging lives in
+`fetch_poll` terminal results carry response headers as `headers-json`,
+host-owned JSON text serialized by the JS host. This is the same hard
+never-let-a-JS-proxy-reach-Lua invariant as `preview_console_drain` (see
+[preview.md](preview.md)): wasmoon exposes nested JS objects as proxy userdata,
+and `pairs()` on that userdata throws—the mechanism behind issue #65. The
+Fennel fetch backend and the `web_fetch` tool decode `headers-json` before
+inspection. Pure-Fennel hosts may continue to provide a native `headers`
+table for backward compatibility.
+
 `packages/bindings/src/fetch/pollProtocol.ts` (`FetchPoller`).
 
 `request` in `fetch.fnl` now **requires `opts.yield`** and errors
