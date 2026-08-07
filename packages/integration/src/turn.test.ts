@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFenRuntime, loadFenTree, type FenSource } from "@fen-web/runtime";
-import { FetchPoller, ScriptedFetch } from "@fen-web/bindings";
+import { FetchPoller, ScriptedFetch, type FetchRequestOptions } from "@fen-web/bindings";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fenPackages = path.resolve(here, "..", "..", "..", "fen", "packages");
@@ -223,6 +223,40 @@ test("wasmoon calls a synchronous JS __fen_host function synchronously from Lua 
     `);
     assert.equal(rt.lua.global.get("__sync_probe_type"), "number");
     assert.equal(rt.lua.global.get("__sync_probe_result"), 42);
+  } finally {
+    rt.close();
+  }
+});
+
+test("wasmoon UTF-8-decodes a Lua request string before the fetch stub encodes its wire body", async () => {
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({ status: 204, chunks: [] });
+  let seenOptions: FetchRequestOptions | undefined;
+
+  const rt = await createFenRuntime({
+    sources: new Map(),
+    host: {
+      capture_fetch: (opts: FetchRequestOptions) => {
+        seenOptions = opts;
+        return scripted.fetch(opts);
+      },
+    },
+  });
+
+  try {
+    await rt.doString(`
+      __fetch_result = __fen_host.capture_fetch({
+        method = "POST",
+        url = "https://example.com",
+        body = "café —"
+      })
+    `);
+
+    assert.equal(seenOptions?.body, "café —");
+    assert.deepEqual(
+      scripted.lastRequest?.body,
+      new Uint8Array([0x63, 0x61, 0x66, 0xc3, 0xa9, 0x20, 0xe2, 0x80, 0x94]),
+    );
   } finally {
     rt.close();
   }

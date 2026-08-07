@@ -1,17 +1,15 @@
-// Byte <-> Lua-string conversion.
+// Request/response byte conversion at the wasmoon boundary.
 //
-// wasmoon marshals JS strings into Lua strings by round-tripping through
-// UTF-16/UTF-8-ish coercion. Lua strings are just byte arrays, but HTTP
-// response bodies (SSE frames, JSON, occasionally binary) are arbitrary
-// bytes and are NOT necessarily valid UTF-8 mid-stream (a chunk boundary
-// can split a multi-byte UTF-8 sequence). Decoding chunks as UTF-8 text
-// would corrupt those bytes or throw. Instead we treat each byte as one
-// Lua-string byte using a latin1 (ISO-8859-1) mapping: byte value N maps
-// to JS code unit N, 1:1, lossless for any byte 0-255. Node's Buffer
-// supports this natively via the 'latin1'/'binary' encoding; for
-// environments without Buffer (browser) we fall back to
-// String.fromCharCode over the raw byte values, chunked to avoid blowing
-// the call stack on large arrays.
+// Wasmoon owns Lua <-> JS string encoding: it UTF-8-transcodes strings in
+// both directions. The Fennel layer never hands latin1-coded bytes to JS
+// through wasmoon. Therefore request bodies arrive here as ordinary JS text
+// and must be encoded as UTF-8 before fetch().
+//
+// Response bodies are different: fetch() gives us arbitrary Uint8Array
+// chunks, including chunks that split a UTF-8 sequence. `toLuaBytes` keeps
+// those chunks in a one-code-unit-per-byte intermediate representation, but
+// the response direction's wasmoon marshalling is not byte-safe; that larger
+// response-side issue is intentionally left for a follow-up.
 
 const CHUNK_SIZE = 0x8000;
 
@@ -19,9 +17,10 @@ function hasBuffer(): boolean {
   return typeof Buffer !== "undefined";
 }
 
-/** Convert raw bytes to a Lua-compatible byte string (1 JS UTF-16 code
- * unit per byte, values 0-255). Do NOT use this for text you intend to
- * read as UTF-8 in JS — it is intentionally not real decoding. */
+/** Convert response bytes to the intermediate string representation used by
+ * the Lua-facing stream protocol. This is not UTF-8 decoding: each byte is
+ * represented by one JS code unit so arbitrary response chunks can be held
+ * without interpreting split multi-byte sequences. */
 export function toLuaBytes(bytes: Uint8Array): string {
   if (hasBuffer()) {
     return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("latin1");
@@ -34,15 +33,38 @@ export function toLuaBytes(bytes: Uint8Array): string {
   return out;
 }
 
-/** Inverse of toLuaBytes: recover the raw bytes from a Lua-style byte
- * string. */
+/** Encode a request body string as UTF-8.
+ *
+ * The string has already crossed wasmoon, which decoded the Lua string's
+ * UTF-8 bytes into a normal JS Unicode string. Always use TextEncoder here:
+ * treating JS code units <= 0xff as latin1 would corrupt text such as
+ * "café" by emitting E9 instead of C3 A9. A genuinely binary request body
+ * is outside this string contract. */
 export function fromLuaBytes(s: string): Uint8Array {
-  if (hasBuffer()) {
-    return new Uint8Array(Buffer.from(s, "latin1"));
+  return new TextEncoder().encode(s);
+}
+
+/** HTTP headers use the separate ASCII-only contract. Do not apply the
+ * latin1 byte-string conversion to them: a non-ASCII header value is invalid
+ * for this transport and must be rejected rather than silently re-encoded. */
+export function assertAsciiHeaders(headers?: Record<string, string>): void {
+  if (!headers) return;
+
+  for (const [name, value] of Object.entries(headers)) {
+    if (!isAscii(name)) {
+      throw new TypeError(`HTTP header name ${JSON.stringify(name)} must contain ASCII characters only`);
+    }
+    if (!isAscii(value)) {
+      throw new TypeError(
+        `HTTP header value for ${JSON.stringify(name)} must contain ASCII characters only`,
+      );
+    }
   }
-  const out = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) {
-    out[i] = s.charCodeAt(i) & 0xff;
+}
+
+function isAscii(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    if (value.charCodeAt(i) > 0x7f) return false;
   }
-  return out;
+  return true;
 }

@@ -1,10 +1,10 @@
-import { toLuaBytes } from "./bytes.js";
+import { assertAsciiHeaders, fromLuaBytes, toLuaBytes } from "./bytes.js";
 import { ACCUMULATE_BODY_CAP } from "./types.js";
 import type { FetchRequestOptions, FetchResult, HostFetch } from "./types.js";
 
-/** A scripted response for ScriptedFetch. Chunks may be strings (already
- * Lua-byte-string encoded) or raw Uint8Arrays (converted with toLuaBytes),
- * letting tests exercise binary round-trips. */
+/** A scripted response for ScriptedFetch. Chunks may be strings in the
+ * Lua-facing stream representation or raw Uint8Arrays (converted with
+ * toLuaBytes), letting tests exercise response-byte handling. */
 export interface ScriptedResponse {
   status: number;
   headers?: Record<string, string>;
@@ -26,6 +26,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export interface ScriptedRequest {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  /** Raw wire bytes recovered from the Lua byte string. */
+  body?: Uint8Array;
+}
+
 /** In-memory/scripted stub implementation of HostFetch. Queue responses with
  * enqueue(), then drive code that calls fetch(); each call consumes the next
  * queued response in FIFO order. Its delay and abort controls intentionally
@@ -33,16 +41,37 @@ function sleep(ms: number): Promise<void> {
  * that can expire while an onChunk backpressure promise is outstanding. */
 export class ScriptedFetch implements HostFetch {
   private queue: ScriptedResponse[] = [];
+  private _lastRequest: ScriptedRequest | undefined;
+
+  /** The most recent request after transport-side byte normalization. */
+  get lastRequest(): ScriptedRequest | undefined {
+    return this._lastRequest;
+  }
 
   enqueue(response: ScriptedResponse): void {
     this.queue.push(response);
   }
 
   async fetch(opts: FetchRequestOptions): Promise<FetchResult> {
+    try {
+      assertAsciiHeaders(opts.headers);
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+
     const response = this.queue.shift();
     if (!response) {
       throw new Error("ScriptedFetch: no scripted response queued");
     }
+
+    // Record only requests that reached a scripted transport response. A
+    // failed queue lookup must not make lastRequest look like it was sent.
+    this._lastRequest = {
+      method: opts.method,
+      url: opts.url,
+      headers: opts.headers ? { ...opts.headers } : undefined,
+      body: opts.body !== undefined ? fromLuaBytes(opts.body) : undefined,
+    };
 
     if (response.hang) {
       if (!opts.timeoutMs) {

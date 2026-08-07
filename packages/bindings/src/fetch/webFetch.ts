@@ -1,4 +1,4 @@
-import { fromLuaBytes, toLuaBytes } from "./bytes.js";
+import { assertAsciiHeaders, fromLuaBytes, toLuaBytes } from "./bytes.js";
 import { ACCUMULATE_BODY_CAP } from "./types.js";
 import type { FetchRequestOptions, FetchResult, HostFetch } from "./types.js";
 
@@ -60,15 +60,15 @@ export class WebHostFetch implements HostFetch {
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
     try {
+      assertAsciiHeaders(opts.headers);
+      // Wasmoon has already UTF-8-decoded the Lua request string into JS
+      // text. Encode that text once as UTF-8 for the wire; the Fennel layer
+      // never supplied a latin1-coded byte string here.
+      const requestBody = opts.body !== undefined ? fromLuaBytes(opts.body) : undefined;
       const response = await fetch(opts.url, {
         method: opts.method,
         headers: opts.headers,
-        // Lua strings are byte arrays; opts.body was encoded 1-byte-per-
-        // code-unit by the Fennel/runtime side (see bytes.ts). Passing it
-        // straight through as a JS string would let fetch() re-encode it
-        // as UTF-8, double-encoding any non-ASCII byte. Decode back to
-        // raw bytes first.
-        body: opts.body !== undefined ? (fromLuaBytes(opts.body) as BodyInit) : undefined,
+        body: requestBody as BodyInit | undefined,
         signal: controller.signal,
       });
 

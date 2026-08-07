@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 
 import { WebHostFetch } from "./webFetch.js";
 import { ACCUMULATE_BODY_CAP } from "./types.js";
-import { fromLuaBytes, toLuaBytes } from "./bytes.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -267,7 +266,80 @@ test("network failures are mapped to a FetchFailure", async (t) => {
   assert.deepEqual(result, { error: "network unreachable" });
 });
 
-test("body is decoded from Lua bytes before being sent (no double UTF-8 encoding)", async () => {
+test("a wasmoon-shaped em dash is sent as the single-encoded UTF-8 sequence", async (t) => {
+  const original = globalThis.fetch;
+  let capturedBody: BodyInit | null | undefined;
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    capturedBody = init?.body;
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+
+  const result = await new WebHostFetch().fetch({
+    method: "POST",
+    url: "https://example.com",
+    body: "—",
+  });
+
+  assert.ok(!("error" in result), `expected success, got ${JSON.stringify(result)}`);
+  assert.ok(capturedBody instanceof Uint8Array, "expected fetch stub to receive a Uint8Array");
+  assert.deepEqual(capturedBody, new Uint8Array([0xe2, 0x80, 0x94]));
+});
+
+test("JSON request bodies preserve an em dash through the fetch boundary", async (t) => {
+  const original = globalThis.fetch;
+  let capturedBody: BodyInit | null | undefined;
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    capturedBody = init?.body;
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+
+  const payload = {
+    system: "Keep this em dash — intact",
+    messages: [{ role: "user", content: "hi" }],
+  };
+  const result = await new WebHostFetch().fetch({
+    method: "POST",
+    url: "https://example.com",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  assert.ok(!("error" in result), `expected success, got ${JSON.stringify(result)}`);
+  assert.ok(capturedBody instanceof Uint8Array, "expected fetch stub to receive a Uint8Array");
+  const parsed = JSON.parse(new TextDecoder().decode(capturedBody)) as typeof payload;
+  assert.deepEqual(parsed, payload);
+});
+
+test("non-ASCII request header values are rejected before fetch", async (t) => {
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = (async () => {
+    called = true;
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+
+  const result = await new WebHostFetch().fetch({
+    method: "POST",
+    url: "https://example.com",
+    headers: { "x-user-label": "café" },
+  });
+
+  assert.deepEqual(result, {
+    error: 'HTTP header value for "x-user-label" must contain ASCII characters only',
+  });
+  assert.equal(called, false);
+});
+
+test("wasmoon-shaped Unicode request bodies are encoded once as UTF-8", async () => {
   const original = globalThis.fetch;
   let capturedBody: unknown;
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
@@ -276,21 +348,19 @@ test("body is decoded from Lua bytes before being sent (no double UTF-8 encoding
   }) as typeof fetch;
   try {
     const nonAscii = "héllo wörld — 你好 💥";
-    const luaBytes = toLuaBytes(new TextEncoder().encode(nonAscii));
 
     const client = new WebHostFetch();
     const result = await client.fetch({
       method: "POST",
       url: "https://example.com",
-      body: luaBytes,
+      body: nonAscii,
     });
 
     assert.ok(!("error" in result));
-    assert.ok(capturedBody instanceof Uint8Array, "expected body to be decoded to raw bytes");
-    assert.deepEqual(capturedBody, fromLuaBytes(luaBytes));
-    // And decoding those bytes back as UTF-8 recovers the original text —
-    // proving there was no double-encoding round trip through fetch().
-    assert.equal(new TextDecoder().decode(capturedBody as Uint8Array), nonAscii);
+    assert.ok(capturedBody instanceof Uint8Array, "expected body to be encoded to raw UTF-8 bytes");
+    const expected = new TextEncoder().encode(nonAscii);
+    assert.deepEqual(capturedBody, expected);
+    assert.equal(new TextDecoder().decode(capturedBody), nonAscii);
   } finally {
     globalThis.fetch = original;
   }

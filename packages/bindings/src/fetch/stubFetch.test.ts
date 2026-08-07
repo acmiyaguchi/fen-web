@@ -85,7 +85,57 @@ test("ScriptedFetch can abort after delivering a chunk", async () => {
   assert.deepEqual(received, ["before abort"]);
 });
 
-test("binary bytes survive round-trip through toLuaBytes/fromLuaBytes", async () => {
+test("request body strings are unconditionally UTF-8 encoded", () => {
+  assert.deepEqual(fromLuaBytes("café"), new Uint8Array([0x63, 0x61, 0x66, 0xc3, 0xa9]));
+  assert.deepEqual(fromLuaBytes("—"), new Uint8Array([0xe2, 0x80, 0x94]));
+  assert.deepEqual(
+    fromLuaBytes("café —"),
+    new Uint8Array([0x63, 0x61, 0x66, 0xc3, 0xa9, 0x20, 0xe2, 0x80, 0x94]),
+  );
+});
+
+test("ScriptedFetch converts a wasmoon-shaped request body to raw wire bytes", async () => {
+  const stub = new ScriptedFetch();
+  stub.enqueue({ status: 204, chunks: [] });
+
+  const result = await stub.fetch({
+    method: "POST",
+    url: "https://example.com",
+    body: "—",
+  });
+
+  assert.ok(!("error" in result));
+  assert.ok(stub.lastRequest);
+  assert.deepEqual(stub.lastRequest?.body, new Uint8Array([0xe2, 0x80, 0x94]));
+});
+
+test("ScriptedFetch does not record a request when its queue is empty", async () => {
+  const stub = new ScriptedFetch();
+
+  await assert.rejects(
+    () => stub.fetch({ method: "POST", url: "https://example.com", body: "café" }),
+    /no scripted response queued/,
+  );
+  assert.equal(stub.lastRequest, undefined);
+});
+
+test("ScriptedFetch rejects non-ASCII request header values like WebHostFetch", async () => {
+  const stub = new ScriptedFetch();
+  stub.enqueue({ status: 200, chunks: [] });
+
+  const result = await stub.fetch({
+    method: "GET",
+    url: "https://example.com",
+    headers: { "x-user-label": "café" },
+  });
+
+  assert.deepEqual(result, {
+    error: 'HTTP header value for "x-user-label" must contain ASCII characters only',
+  });
+  assert.equal(stub.lastRequest, undefined);
+});
+
+test("response chunks retain their intermediate byte-string representation", async () => {
   const original = new Uint8Array([0, 1, 2, 255, 254, 128, 10, 13, 0]);
   const stub = new ScriptedFetch();
   stub.enqueue({ status: 200, chunks: [original] });
@@ -100,12 +150,12 @@ test("binary bytes survive round-trip through toLuaBytes/fromLuaBytes", async ()
   });
 
   assert.equal(chunks.length, 1);
-  assert.deepEqual(fromLuaBytes(chunks[0]), original);
   assert.ok("body" in result);
   if ("body" in result) {
-    assert.deepEqual(fromLuaBytes(result.body!), original);
+    assert.equal(result.body, chunks[0]);
   }
 
-  // Sanity: toLuaBytes is deterministic and matches what the stub produced.
+  // The response-side intermediate representation is deterministic. Its
+  // later Lua marshalling is a separate, known response-direction issue.
   assert.equal(toLuaBytes(original), chunks[0]);
 });

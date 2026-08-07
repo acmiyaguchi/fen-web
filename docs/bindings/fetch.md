@@ -23,7 +23,7 @@ TS (`packages/bindings/src/fetch/types.ts`) — camelCase:
 ```ts
 interface FetchRequestOptions {
   method: string; url: string; headers?: Record<string,string>;
-  body?: string;  // Lua-byte-string encoded; see bytes.ts
+  body?: string;  // JS text after wasmoon UTF-8 string marshalling
   timeoutMs?: number; connectTimeoutMs?: number; idleTimeoutMs?: number;
   onChunk?: (bytes: string) => void | PromiseLike<void>;
   accumulateBody?: boolean;  // default true; false retains only ACCUMULATE_BODY_CAP bytes
@@ -75,12 +75,28 @@ now have genuinely different scopes.
 
 ## Request body encoding
 
-`opts.body` (if present) is Lua-byte-string encoded (one JS UTF-16 code
-unit per byte, per [host-protocol.md](host-protocol.md)'s latin1
-discipline). `webFetch.ts` decodes it back to raw bytes with
-`fromLuaBytes` and passes a `Uint8Array` as the `fetch()` body — passing
-the Lua string straight through would let `fetch()` re-encode it as
-UTF-8, double-encoding any non-ASCII byte.
+`opts.body` is ordinary text when it reaches the JS host. Wasmoon owns Lua
+↔ JS string encoding and UTF-8-transcodes strings in both directions; the
+Fennel layer never hands latin1-coded bytes to JS through wasmoon. Both
+`WebHostFetch` and `ScriptedFetch` therefore pass the body string through
+`fromLuaBytes`, which unconditionally uses `TextEncoder` to produce UTF-8
+wire bytes. For example, `"café"` becomes `[63, 61, 66, c3, a9]`, and
+`"—"` becomes `[e2, 80, 94]`.
+
+This is a text-body contract, not a general binary-body transport. If a
+genuinely binary request body is needed, it must cross the Lua boundary as a
+table of byte numbers; that contract is documented for future work and is
+not implemented here.
+
+## Request headers
+
+Headers are not Lua byte strings. This transport applies a strict ASCII-only
+contract to header names and values and rejects a request with a non-ASCII
+entry before calling browser `fetch()` (the scripted transport applies the
+same check). It does not pass non-ASCII header values through the latin1
+conversion or silently sanitize them: HTTP header metadata must be supplied
+as valid ASCII by the Fennel/provider layer. The rejection is returned as the
+usual `{error}` fetch result.
 
 ## accumulateBody
 
