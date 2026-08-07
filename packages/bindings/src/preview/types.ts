@@ -63,4 +63,6 @@ export interface HostPreview {
   /** Drop terminal state for a completed RPC (mandatory cleanup, like
    * FetchPoller.dispose). */
   rpcDispose(id: number): void;
+  /** Release the iframe and window listener owned by this boot. */
+  dispose(): void;
 }

@@ -17,6 +17,7 @@ interface RpcState {
 interface PreviewIframe {
   setAttribute(name: string, value: string): void;
   addEventListener(type: "load", listener: () => void): void;
+  remove(): void;
   contentWindow: { postMessage(message: unknown, targetOrigin: string): void } | null;
 }
 interface PreviewDocument {
@@ -26,6 +27,10 @@ interface PreviewDocument {
 }
 interface PreviewWindow {
   addEventListener(
+    type: "message",
+    listener: (ev: { data: unknown; source: unknown; origin?: string }) => void,
+  ): void;
+  removeEventListener(
     type: "message",
     listener: (ev: { data: unknown; source: unknown; origin?: string }) => void,
   ): void;
@@ -57,6 +62,11 @@ export class WebHostPreview implements HostPreview {
   private readonly pending: number[] = [];
   private readonly requests = new Map<number, RpcState>();
   private nextId = 1;
+  private readonly messageListener = (ev: {
+    data: unknown;
+    source: unknown;
+    origin?: string;
+  }) => this.onMessage(ev);
 
   constructor(private readonly opts: WebHostPreviewOptions = {}) {}
 
@@ -96,6 +106,18 @@ export class WebHostPreview implements HostPreview {
     this.requests.delete(id);
   }
 
+  dispose(): void {
+    if (this.listenerBound) {
+      this.window.removeEventListener("message", this.messageListener);
+      this.listenerBound = false;
+    }
+    this.iframe?.remove();
+    this.iframe = null;
+    this.ready = false;
+    this.pending.length = 0;
+    this.requests.clear();
+  }
+
   private ensureIframe(): PreviewIframe {
     if (this.iframe) return this.iframe;
     const doc = this.document;
@@ -116,7 +138,7 @@ export class WebHostPreview implements HostPreview {
   private bindMessageListener(): void {
     if (this.listenerBound) return;
     this.listenerBound = true;
-    this.window.addEventListener("message", (ev) => this.onMessage(ev));
+    this.window.addEventListener("message", this.messageListener);
   }
 
   private onLoad(): void {

@@ -339,6 +339,11 @@
           (emit-agent-shutdown! agent (if run-ok? :normal :crashed)
                                 (when (not run-ok?) run-result))
           (set _G.__fen_demo_request_stop nil)
+          (when (not run-ok?)
+            ;; presenter-registry invokes :run through pcall. Re-raise after
+            ;; lifecycle cleanup so the JS coroutine pump reports the fatal
+            ;; error instead of treating a dead presenter as normal exit.
+            (error (.. "presenter run failed: " (tostring run-result))))
           nil)))))
 
 M

@@ -142,4 +142,17 @@ export class FakeDom implements DomAdapter, HostDomApply {
   childIds(id: string): string[] {
     return [...this.node(id).children];
   }
+
+  /** Simulate Element.replaceChildren(), including removal of old listeners
+   * and queued events before a fresh VM is mounted. */
+  replaceChildren(id: string): void {
+    const parent = this.node(id);
+    for (const child of [...parent.children]) this.remove(child);
+    this.queue = [];
+  }
+
+  /** DOM-style spelling used by restart tests. */
+  children(id: string): string[] {
+    return this.childIds(id);
+  }
 }

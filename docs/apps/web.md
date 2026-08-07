@@ -66,6 +66,21 @@ see the top-level [README.md](../../README.md) non-goals.
   `SyncKvCache` (`packages/bindings`) at boot — see
   [../bindings/kv.md](../bindings/kv.md).
 
+  **Fatal errors and restart.** A presenter/run-loop failure, an in-VM boot
+  error, or an uncaught browser error is shown in the shell as a fatal panel
+  with the error message and stack when available. Before a failed VM is
+  closed, the browser awaits the cache's pending IndexedDB write-backs
+  (best-effort, since flushing can itself fail). The **Restart** action then
+  runs the complete browser boot path again, including a new runtime and a
+  fresh synchronous kv snapshot. It never reuses the poisoned Lua state:
+  `fs_kv.install!` and the web boot patch VM globals without an uninstall
+  operation. The durable seed remains seed-if-empty, so restart preserves
+  the user's workspace. Restart clears the old presenter mount before the
+  fresh VM renders, disposes the old preview iframe/message bridge and
+  IndexedDB connection, and bounds cooperative shutdown with a hard-close
+  fallback. A restart without stored provider credentials returns to the
+  settings gate instead of booting a VM that cannot resolve its key.
+
   **Bundler/dev-server:** Vite (`apps/web/vite.config.ts`). `npm run dev
   -w @fen-web/web` serves the page; `npm run build` produces the static
   bundle. The fen submodule + fen-web Fennel trees are inlined at bundle

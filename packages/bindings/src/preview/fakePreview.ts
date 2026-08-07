@@ -40,4 +40,8 @@ export class FakePreview implements HostPreview {
   rpcDispose(id: number): void {
     this.results.delete(id);
   }
+
+  dispose(): void {
+    this.results.clear();
+  }
 }

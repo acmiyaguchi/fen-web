@@ -61,7 +61,11 @@
     ;; Tick every frame (not only while busy) so the canonical :runtime-tick
     ;; event fires each idle frame too, matching fen.interactive's on-tick
     ;; contract; on-tick itself only resumes a turn when one is in flight.
-    (when ctx.on-tick (pcall ctx.on-tick))
+    ;; Do not swallow a host/presenter tick failure: it poisons this VM and
+    ;; must reach the JS pump so the fatal UI can flush and close it.
+    (when ctx.on-tick
+      (let [(ok? err) (pcall ctx.on-tick)]
+        (when (not ok?) (error (.. "runtime tick failed: " (tostring err))))))
     (dom.render-frame! ctx)
     ;; The browser boot drives run inside a coroutine pump (docs/runtime/
     ;; boot.md); yielding hands the frame to the JS event loop so pending

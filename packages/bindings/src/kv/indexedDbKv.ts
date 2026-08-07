@@ -13,6 +13,7 @@ const STORE_NAME = "kv";
  * the no-external-runtime-deps constraint. */
 export class IndexedDbKv implements HostKv {
   private dbPromise: Promise<IDBDatabase>;
+  private closed = false;
 
   constructor(dbName = "fen-kv", private readonly indexedDB: IDBFactory = globalThis.indexedDB) {
     this.dbPromise = new Promise((resolve, reject) => {
@@ -137,6 +138,15 @@ export class IndexedDbKv implements HostKv {
       tx.onabort = () =>
         reject(tx.error ?? new Error("IndexedDbKv.seedIfEmpty: transaction aborted"));
     });
+  }
+
+  /** Close the per-session IndexedDB connection. Safe to call more than once. */
+  async close(): Promise<void> {
+    if (this.closed) return;
+    const db = await this.dbPromise;
+    if (this.closed) return;
+    this.closed = true;
+    db.close();
   }
 
   async list(prefix: string): Promise<string[]> {

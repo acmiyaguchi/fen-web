@@ -18,6 +18,7 @@ function makeFakeDom() {
   };
   const attrs: Record<string, string> = {};
   let loadListener: (() => void) | undefined;
+  let removed = false;
   const iframe = {
     contentWindow,
     setAttribute(name: string, value: string) {
@@ -25,6 +26,9 @@ function makeFakeDom() {
     },
     addEventListener(_type: "load", listener: () => void) {
       loadListener = listener;
+    },
+    remove() {
+      removed = true;
     },
   };
   const appended: unknown[] = [];
@@ -44,6 +48,12 @@ function makeFakeDom() {
     ) {
       messageListener = listener;
     },
+    removeEventListener(
+      _type: "message",
+      listener: (ev: { data: unknown; source: unknown; origin?: string }) => void,
+    ) {
+      if (messageListener === listener) messageListener = undefined;
+    },
   };
   return {
     document,
@@ -52,6 +62,10 @@ function makeFakeDom() {
     contentWindow,
     attrs,
     posted,
+    appended,
+    get removed() {
+      return removed;
+    },
     fireLoad: () => loadListener?.(),
     dispatchMessage: (ev: { data: unknown; source: unknown; origin?: string }) =>
       messageListener?.(ev),
@@ -138,6 +152,20 @@ test("RPCs started before ready are buffered, then flushed on load", () => {
   assert.equal(msg.id, id);
   assert.equal(msg.method, "click");
   assert.equal(msg.selector, "#go");
+});
+
+test("dispose removes the iframe/listener and permits a clean fresh iframe", () => {
+  const dom = makeFakeDom();
+  const preview = new WebHostPreview({ document: dom.document, window: dom.window });
+  preview.setHtml("<div>old</div>");
+  const pending = preview.rpcStart({ method: "query", selector: "#old" });
+
+  preview.dispose();
+  assert.equal(dom.removed, true, "dispose should remove the old iframe");
+  assert.throws(() => preview.rpcPoll(pending), /unknown rpc id/);
+
+  preview.setHtml("<div>new</div>");
+  assert.equal(dom.appended.length, 2, "a fresh boot should append one replacement iframe");
 });
 
 test("FakePreview records HTML + requests and resolves synchronously", () => {

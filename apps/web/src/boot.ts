@@ -60,6 +60,10 @@ export interface DemoRuntimeDeps {
   cjsonSource?: string;
   /** Await pending kv write-backs (SyncKvCache.flush); optional in tests. */
   flush?: () => Promise<void>;
+  /** Called after a fatal boot/run-loop error has been flushed and the VM closed. */
+  onFatal?: (err: unknown) => void | Promise<void>;
+  /** Release per-boot host resources after the VM is closed. */
+  dispose?: () => void | Promise<void>;
   /** Frame scheduler; defaults to rAF (browser) / setTimeout (off-DOM). */
   schedule?: (fn: () => void) => void;
 }
@@ -71,6 +75,8 @@ export interface DemoSession {
    * frame so presenter shutdown, session close, and the :agent-shutdown
    * lifecycle event all run, then close the VM. Resolves once torn down. */
   stop(): Promise<void>;
+  /** Hard-close the VM and host resources without waiting for the presenter. */
+  close(): Promise<void>;
 }
 
 /** Pre-set package.loaded["fen.util.http.backend"] to the bundled fen-web
@@ -127,17 +133,45 @@ export async function bootDemo(
     },
   });
 
-  await installFetchBackend(rt, deps.fetchBackendSource);
+  let pump: Awaited<ReturnType<FenRuntime["createCoroutinePump"]>>;
+  try {
+    await installFetchBackend(rt, deps.fetchBackendSource);
 
-  rt.lua.global.set("__demo_opts", {
-    cwd: opts.cwd ?? "/workspace",
-    provider,
-    model: opts.model,
-  });
+    rt.lua.global.set("__demo_opts", {
+      cwd: opts.cwd ?? "/workspace",
+      provider,
+      model: opts.model,
+    });
 
-  const pump = await rt.createCoroutinePump(
-    `function() return (require "fen_web.web.boot").run(__demo_opts) end`,
-  );
+    pump = await rt.createCoroutinePump(
+      `function() return (require "fen_web.web.boot").run(__demo_opts) end`,
+    );
+  } catch (err) {
+    // The coroutine pump only creates the Lua coroutine here; it does not run
+    // fen_web.web.boot until the first pump(). This covers pre-pump setup
+    // failures, chiefly installFetchBackend; body failures arrive in step().
+    try {
+      await deps.flush?.();
+    } catch (flushErr) {
+      console.error("fen-web demo: fatal-error flush failed", flushErr);
+    }
+    try {
+      rt.close();
+    } catch (closeErr) {
+      console.error("fen-web demo: failed to close after boot error", closeErr);
+    }
+    try {
+      await deps.dispose?.();
+    } catch (disposeErr) {
+      console.error("fen-web demo: failed to dispose after boot error", disposeErr);
+    }
+    try {
+      await deps.onFatal?.(err);
+    } catch (callbackErr) {
+      console.error("fen-web demo: fatal callback failed", callbackErr);
+    }
+    throw err;
+  }
 
   const schedule =
     deps.schedule ??
@@ -147,14 +181,25 @@ export async function bootDemo(
 
   let closed = false;
   let stopResolve: (() => void) | undefined;
-  const finish = () => {
-    if (closed) return;
+  let closePromise: Promise<void> | undefined;
+  const finish = (): Promise<void> => {
+    if (closePromise) return closePromise;
     closed = true;
-    try {
-      rt.close();
-    } finally {
-      stopResolve?.();
-    }
+    closePromise = (async () => {
+      try {
+        rt.close();
+      } catch (closeErr) {
+        console.error("fen-web demo: failed to close runtime", closeErr);
+      }
+      try {
+        await deps.dispose?.();
+      } catch (disposeErr) {
+        // Resource disposal is best-effort and must not hide the original
+        // fatal error or leave stop() waiting forever.
+        console.error("fen-web demo: failed to dispose host resources", disposeErr);
+      }
+    })().finally(() => stopResolve?.());
+    return closePromise;
   };
 
   // Drive the presenter loop one resume per animation frame: each pump()
@@ -166,30 +211,41 @@ export async function bootDemo(
   // we close the VM.
   const step = async () => {
     if (closed) return;
-    let status: string;
     try {
-      status = await pump.pump();
+      const status = await pump.pump();
+      if (status === "suspended") {
+        if (!closed) schedule(() => void step());
+        return;
+      }
+      await finish();
     } catch (err) {
       console.error("fen-web demo: run loop crashed", err);
-      finish();
-      return;
+      // The VM may have queued writes in the synchronous cache even though
+      // the coroutine is poisoned. Drain those writes before closing it;
+      // close() is deliberately last because the browser shims patch VM-wide
+      // globals and have no uninstall operation.
+      try {
+        await deps.flush?.();
+      } catch (flushErr) {
+        console.error("fen-web demo: fatal-error flush failed", flushErr);
+      }
+      await finish();
+      try {
+        await deps.onFatal?.(err);
+      } catch (callbackErr) {
+        // Fatal reporting must not turn into an unhandled rejection of the
+        // scheduler task (and the VM is already safely closed at this point).
+        console.error("fen-web demo: fatal callback failed", callbackErr);
+      }
     }
-    if (status === "suspended") {
-      if (!closed) schedule(() => void step());
-      return;
-    }
-    finish();
   };
   void step();
 
   return {
     flush: () => deps.flush?.() ?? Promise.resolve(),
-    stop: () =>
-      new Promise<void>((resolve) => {
-        if (closed) {
-          resolve();
-          return;
-        }
+    stop: () => {
+      if (closed) return closePromise ?? Promise.resolve();
+      return new Promise<void>((resolve) => {
         stopResolve = resolve;
         // Ask the presenter run loop to quit cooperatively; the scheduled
         // step() loop then drains one more frame, the loop exits, boot.run
@@ -207,6 +263,8 @@ export async function bootDemo(
           console.error("fen-web demo: cooperative stop failed", err);
           finish();
         }
-      }),
+      });
+    },
+    close: () => finish(),
   };
 }
