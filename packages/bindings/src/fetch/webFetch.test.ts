@@ -219,6 +219,108 @@ test("accumulateBody:false keeps only the capped head while streaming all chunks
   assert.equal(received[1].charAt(0), "b");
 });
 
+test("streaming TextDecoder carries a split UTF-8 sequence and body matches chunks", async (t) => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0xc3]));
+        controller.enqueue(new Uint8Array([0xa9]));
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200 });
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+
+  const received: string[] = [];
+  const result = await new WebHostFetch().fetch({
+    method: "GET",
+    url: "https://example.com",
+    onChunk: (text) => {
+      received.push(text);
+    },
+  });
+
+  // The first wire chunk (0xc3) is only a partial multi-byte prefix, so it
+  // decodes to "" and is skipped; the é surfaces once 0xa9 completes it.
+  assert.deepEqual(received, ["é"]);
+  assert.ok(!("error" in result));
+  if (!("error" in result)) {
+    assert.equal(result.body, "é");
+    assert.equal(result.body, received.join(""));
+  }
+});
+
+test("WebHostFetch applies the body byte cap at a UTF-8 character boundary", async (t) => {
+  const original = globalThis.fetch;
+  const prefix = "a".repeat(65535);
+  const wireText = `${prefix}é`;
+  globalThis.fetch = (async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(wireText));
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200 });
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+
+  const received: string[] = [];
+  const result = await new WebHostFetch().fetch({
+    method: "GET",
+    url: "https://example.com",
+    accumulateBody: false,
+    onChunk: (text) => {
+      received.push(text);
+    },
+  });
+
+  assert.ok(!("error" in result));
+  if (!("error" in result)) {
+    assert.equal(result.body, prefix);
+    assert.equal(new TextEncoder().encode(result.body).byteLength, 65535);
+    assert.equal(received.join(""), wireText);
+  }
+});
+
+test("a boundary-blocked cap closes the head — later chunks never splice past it", async (t) => {
+  const original = globalThis.fetch;
+  const prefix = "a".repeat(65535);
+  globalThis.fetch = (async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`${prefix}é`));
+        controller.enqueue(new TextEncoder().encode("ZZZ"));
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200 });
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+
+  const result = await new WebHostFetch().fetch({
+    method: "GET",
+    url: "https://example.com",
+    accumulateBody: false,
+    onChunk: () => {},
+  });
+
+  assert.ok(!("error" in result));
+  if (!("error" in result)) {
+    // Contiguous prefix of exactly the "a" run: no omitted-é gap, no later "Z".
+    assert.equal(result.body, prefix);
+    assert.ok(!result.body?.includes("Z"), "no post-cap splice from a later chunk");
+  }
+});
+
 test("non-2xx responses remain successful results with status and body", async (t) => {
   const original = globalThis.fetch;
   globalThis.fetch = (async () => {

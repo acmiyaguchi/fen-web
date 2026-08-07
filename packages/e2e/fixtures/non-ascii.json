@@ -3,7 +3,7 @@
   "turns": [
     {
       "request": { "userText": "Say hello with café, an em dash — and emoji 💥." },
-      "response": { "fixture": "happy.sse", "contentType": "text/event-stream" }
+      "response": { "fixture": "non-ascii.sse", "contentType": "text/event-stream" }
     }
   ]
 }

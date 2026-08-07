@@ -35,7 +35,7 @@ test("sends a non-ASCII user prompt as valid JSON to the scripted provider", asy
 
   await submitPrompt(page, prompt);
   await expectTranscript(page, "> " + prompt);
-  await expectTranscript(page, "Hello from the scripted provider.");
+  await expectTranscript(page, "café — 💥");
 
   await router.assertComplete();
 });

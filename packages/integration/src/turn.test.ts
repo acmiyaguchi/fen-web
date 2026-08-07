@@ -262,6 +262,68 @@ test("wasmoon UTF-8-decodes a Lua request string before the fetch stub encodes i
   }
 });
 
+test("Lua receives a scripted SSE UTF-8 chunk byte-for-byte and p.body matches it", async () => {
+  const SSE_CHUNK = "data: café — 💥\n\n";
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: [new TextEncoder().encode(SSE_CHUNK)],
+  });
+
+  const rt = await createFenRuntime({
+    sources: buildSources(),
+    host: makeFetchHost(scripted),
+  });
+
+  try {
+    await installFetchBackend(rt);
+    const pump = await rt.createCoroutinePump(`
+      function()
+        local http = require("fen.util.http")
+        local seen = {}
+        local result = http.request({
+          method = "GET",
+          url = "https://example.com/stream",
+          ["on-chunk"] = function(chunk)
+            table.insert(seen, chunk)
+          end,
+          yield = function()
+            coroutine.yield()
+          end,
+        })
+        assert(#seen == 1, "expected one decoded SSE chunk")
+        local chunk = seen[1]
+        local expected = {
+          0x64, 0x61, 0x74, 0x61, 0x3a, 0x20, 0x63, 0x61, 0x66,
+          0xc3, 0xa9, 0x20, 0xe2, 0x80, 0x94, 0x20,
+          0xf0, 0x9f, 0x92, 0xa5, 0x0a, 0x0a,
+        }
+        assert(result.body == chunk, "p.body must equal the streamed text")
+        assert(#chunk == #expected, "decoded chunk length changed")
+        for i, byte in ipairs(expected) do
+          assert(string.byte(chunk, i) == byte, "UTF-8 byte mismatch at " .. i)
+        end
+        return { body = result.body, chunk = chunk }
+      end
+    `);
+
+    let status = "suspended";
+    let pumps = 0;
+    const MAX_PUMPS = 500;
+    while (status === "suspended" && pumps < MAX_PUMPS) {
+      status = await pump.pump();
+      pumps += 1;
+    }
+    assert.equal(status, "dead", `coroutine did not finish within ${MAX_PUMPS} pumps`);
+    const result = (await pump.result()) as { body: string; chunk: string };
+    assert.equal(result.body, SSE_CHUNK);
+    assert.equal(result.chunk, SSE_CHUNK);
+  } finally {
+    rt.close();
+  }
+});
+
 test("one headless agent turn against a stub OpenAI Chat Completions provider, driven through fen.core.agent + createCoroutinePump", async () => {
   const REPLY_TEXT = "Hello from the stub provider!";
   const scripted = new ScriptedFetch();

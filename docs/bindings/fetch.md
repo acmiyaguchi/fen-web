@@ -25,8 +25,8 @@ interface FetchRequestOptions {
   method: string; url: string; headers?: Record<string,string>;
   body?: string;  // JS text after wasmoon UTF-8 string marshalling
   timeoutMs?: number; connectTimeoutMs?: number; idleTimeoutMs?: number;
-  onChunk?: (bytes: string) => void | PromiseLike<void>;
-  accumulateBody?: boolean;  // default true; false retains only ACCUMULATE_BODY_CAP bytes
+  onChunk?: (text: string) => void | PromiseLike<void>;
+  accumulateBody?: boolean;  // default true; false retains only a UTF-8-byte-capped head
 }
 const ACCUMULATE_BODY_CAP = 65536;  // mirrors native FEN_ERROR_BODY_CAP
 type FetchResult = { status: number; headers: Record<string,string>; body: string }
@@ -93,24 +93,44 @@ not implemented here.
 Headers are not Lua byte strings. This transport applies a strict ASCII-only
 contract to header names and values and rejects a request with a non-ASCII
 entry before calling browser `fetch()` (the scripted transport applies the
-same check). It does not pass non-ASCII header values through the latin1
+same check). It does not pass non-ASCII header values through a byte
 conversion or silently sanitize them: HTTP header metadata must be supplied
 as valid ASCII by the Fennel/provider layer. The rejection is returned as the
 usual `{error}` fetch result.
+
+## Response text encoding and streaming
+
+Responses on this path are UTF-8 **text**, not arbitrary binary data. `WebHostFetch`
+keeps one `TextDecoder("utf-8")` alive for the entire response and calls
+`decode(chunk, {stream: true})` for every wire chunk, then flushes it after the
+stream ends. This preserves a multi-byte character when the browser splits its
+bytes across reads. `ScriptedFetch` applies the same normalization: fixture
+strings are UTF-8 encoded as wire bytes, and fixture `Uint8Array`s are treated
+as raw wire bytes before going through the same streaming decoder.
+
+`onChunk` receives ordinary JS text, and `body` is the concatenation of that
+same decoded text. Wasmoon owns the next boundary crossing and UTF-8-encodes
+these strings into Lua, so valid UTF-8 response bytes (including `café`, em
+dashes, emoji, and CJK) arrive in Lua byte-for-byte unchanged. Empty text chunks
+are possible when a wire chunk contains only the prefix of a split character.
+Binary response bodies are not supported through this string path; a future
+binary contract would need byte arrays rather than Lua strings.
 
 ## accumulateBody
 
 Streaming callers (SSE) pass `accumulate-body? false` in Fennel
 (`accumulateBody: false` in TS) and rely on `on-chunk`/`onChunk`; default
-is `true`. When `false`, `webFetch.ts` still streams every chunk through
-`onChunk` but retains only a bounded head of the body — capped at
-`ACCUMULATE_BODY_CAP` (65536 bytes) — instead of the full response,
-matching the native backend's `FEN_ERROR_BODY_CAP` contract; the retained
-head is for error diagnostics, not a substitute buffered body. The
-Fennel backend (`fetch.fnl`) never reconstructs a body from `on-chunk`
-chunks in either mode — it passes `p.body` straight through (the host's
-full accumulation, or the bounded head when `accumulate-body?` is false),
-so the body is held exactly once, host-side.
+is `true`. When `false`, `webFetch.ts` still streams every decoded text chunk
+through `onChunk` but retains only a bounded head of the body — capped at
+`ACCUMULATE_BODY_CAP` (65536 **UTF-8 bytes**) — instead of the full response,
+matching the native backend's `FEN_ERROR_BODY_CAP` contract; the retained head
+is for error diagnostics, not a substitute buffered body. If the cap would
+fall inside a multi-byte character, the transport omits that character and
+stops at the preceding Unicode character boundary. The Fennel backend
+(`fetch.fnl`) never reconstructs a body from `on-chunk` chunks in either mode —
+it passes `p.body` straight through (the host's full accumulation, or the
+bounded head when `accumulate-body?` is false), so the body is held exactly
+once, host-side.
 
 ## Anthropic direct-browser CORS header (interim)
 

@@ -1,3 +1,4 @@
+import { utf8ByteLength } from "./bytes.js";
 import { ACCUMULATE_BODY_CAP } from "./types.js";
 import type { FetchRequestOptions, FetchResult, HostFetch } from "./types.js";
 
@@ -73,7 +74,7 @@ interface WaitingChunk {
 
 interface PollState {
   chunks: string[];
-  /** Number of byte-string code units currently retained in chunks. */
+  /** Number of UTF-8 bytes currently retained in chunks. */
   pendingBytes: number;
   /** At most one chunk is held back until poll() drains the current batch. */
   waitingChunks: WaitingChunk[];
@@ -90,7 +91,8 @@ interface PollState {
 // can finish before the next poll and retain the whole streamed body in
 // state.chunks even when accumulateBody is false. One oversized transport
 // chunk is allowed, since a chunk cannot be split without changing the
-// streaming contract.
+// streaming contract. Response chunks are UTF-8 text; binary data is not
+// supported by this string path.
 export const MAX_PENDING_BYTES = ACCUMULATE_BODY_CAP;
 export const MAX_PENDING_CHUNKS = 128;
 
@@ -166,7 +168,7 @@ export class FetchPoller {
 
     if (this.hasCapacity(state, bytes)) {
       state.chunks.push(bytes);
-      state.pendingBytes += bytes.length;
+      state.pendingBytes += utf8ByteLength(bytes);
       return;
     }
 
@@ -193,14 +195,14 @@ export class FetchPoller {
     );
   }
 
-  private hasCapacity(state: PollState, bytes: string): boolean {
+  private hasCapacity(state: PollState, text: string): boolean {
     // Permit one oversized chunk when the queue is empty; preserving a whole
     // chunk is required for ordered streaming and avoids silently truncating
-    // SSE frames or binary data.
+    // UTF-8 text.
     return (
       state.chunks.length === 0 ||
       (state.chunks.length < MAX_PENDING_CHUNKS &&
-        state.pendingBytes + bytes.length <= MAX_PENDING_BYTES)
+        state.pendingBytes + utf8ByteLength(text) <= MAX_PENDING_BYTES)
     );
   }
 
@@ -210,7 +212,7 @@ export class FetchPoller {
       if (!this.hasCapacity(state, next.bytes)) return;
       state.waitingChunks.shift();
       state.chunks.push(next.bytes);
-      state.pendingBytes += next.bytes.length;
+      state.pendingBytes += utf8ByteLength(next.bytes);
       next.resolve();
     }
   }
