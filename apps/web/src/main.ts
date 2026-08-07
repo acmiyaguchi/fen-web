@@ -9,6 +9,7 @@ import { DiagnosticsBuffer, FEN_VERSION } from "./diagnostics.js";
 // gate — the litmus test's "HTML shell" TS (docs/architecture/fennel-first.md).
 
 const DB_NAME = "fen-web-demo";
+const KV_FLUSH_INTERVAL_MS = 10_000;
 
 async function copyText(value: string): Promise<void> {
   try {
@@ -90,6 +91,7 @@ async function main(): Promise<void> {
     const originalLabel = button.dataset.fenLabel ?? button.textContent ?? "Copy diagnostics";
     button.disabled = true;
     try {
+      await diagnostics.refreshStorageEstimate();
       await copyText(diagnostics.snapshot(error));
       button.textContent = "Copied";
     } catch (copyErr) {
@@ -392,6 +394,7 @@ async function main(): Promise<void> {
       provider: providerId,
       dbName: DB_NAME,
       diagnostics,
+      onWriteBackError: (err) => showUnexpectedPageError(err),
       onFatal: (err) => handleFatal(err, true),
     }));
     try {
@@ -663,11 +666,69 @@ async function main(): Promise<void> {
     await handleFatal(err);
   }
 
-  // Persist session write-backs on unload (best-effort durability).
-  window.addEventListener("beforeunload", () => {
-    void session?.flush().catch((err) => {
-      console.error("fen-web demo: unload flush failed", err);
+  // Persist session write-backs regularly instead of relying on
+  // beforeunload, which browsers may skip or cannot await. A single-flight
+  // guard prevents a visibility flush and the interval from racing the same
+  // cache. The existing notice mechanism keeps failures visible while the
+  // diagnostics ring records their details.
+  let flushInFlight: Promise<void> | undefined;
+  const flushSession = (reason: string): Promise<void> => {
+    const doFlush = async (): Promise<void> => {
+      const current = session;
+      if (!current) return;
+      try {
+        await current.flush();
+      } catch (err) {
+        // A write-back callback/notice already records ordinary failures. The
+        // unload path has no notice, so retain one collapsed diagnostic there.
+        if (reason === "beforeunload") {
+          diagnostics.recordCollapsed("kv:flush-failed", { reason, error: err });
+          void diagnostics.refreshStorageEstimate();
+          console.error("fen-web demo: unload flush failed", err);
+        } else {
+          showUnexpectedPageError(err);
+          void diagnostics.refreshStorageEstimate();
+        }
+      }
+    };
+
+    // Do not return an existing flight: queue a second flush behind it so
+    // writes enqueued after the first flush began are covered as well.
+    const previous = flushInFlight ?? Promise.resolve();
+    const next = previous.then(doFlush);
+    let tracked: Promise<void>;
+    tracked = next.finally(() => {
+      if (flushInFlight === tracked) flushInFlight = undefined;
     });
+    flushInFlight = tracked;
+    return tracked;
+  };
+  let flushTimer: number | undefined;
+  const armFlushTimer = (): void => {
+    if (flushTimer !== undefined) return;
+    flushTimer = window.setInterval(() => {
+      void flushSession("periodic");
+    }, KV_FLUSH_INTERVAL_MS);
+  };
+  const disarmFlushTimer = (): void => {
+    if (flushTimer === undefined) return;
+    window.clearInterval(flushTimer);
+    flushTimer = undefined;
+  };
+  armFlushTimer();
+  // A page entering bfcache should not retain the interval, but pageshow
+  // (persisted or not) must re-arm it exactly once after restoration.
+  window.addEventListener("pagehide", disarmFlushTimer);
+  window.addEventListener("pageshow", armFlushTimer);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") void flushSession("visibilitychange");
+  });
+
+  // Persist session write-backs on unload (best-effort durability). The
+  // browser may terminate the page before the promise settles, so periodic
+  // and visibility-triggered flushes above are the primary strategy.
+  window.addEventListener("beforeunload", () => {
+    void flushSession("beforeunload");
   });
 }
 

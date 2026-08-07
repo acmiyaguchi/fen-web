@@ -51,8 +51,34 @@ test("SyncKvCache.list returns prefixed keys in ascending order", async () => {
   assert.equal(kv.list("").length, 3);
 });
 
-test("SyncKvCache.flush surfaces a write-back error once", async () => {
+test("SyncKvCache keeps failed keys sticky until a later flush makes them durable", async () => {
   const boom = new Error("quota exceeded");
+  let failing = true;
+  const data = new Map<string, string>();
+  const backing = {
+    get: async (key: string) => data.get(key),
+    list: async () => [...data.keys()],
+    put: async (key: string, value: string) => {
+      if (failing) throw boom;
+      data.set(key, value);
+    },
+    delete: async (key: string) => {
+      data.delete(key);
+    },
+  };
+  const kv = await SyncKvCache.load(backing);
+  kv.put("k", "v");
+  await assert.rejects(() => kv.flush(), (error: unknown) => error === boom);
+  assert.equal(data.get("k"), undefined, "a failed flush must not claim durability");
+
+  failing = false;
+  await kv.flush();
+  assert.equal(data.get("k"), "v", "the retry must write the current in-memory value");
+});
+
+test("SyncKvCache reports write-back failures immediately without masking them", async () => {
+  const boom = new Error("write failed");
+  const observed: unknown[] = [];
   const backing = {
     get: async () => undefined,
     list: async () => [],
@@ -61,9 +87,12 @@ test("SyncKvCache.flush surfaces a write-back error once", async () => {
     },
     delete: async () => {},
   };
-  const kv = await SyncKvCache.load(backing);
+  const kv = await SyncKvCache.load(backing, (error) => {
+    observed.push(error);
+    throw new Error("notice failed");
+  });
+
   kv.put("k", "v");
-  await assert.rejects(() => kv.flush(), /quota exceeded/);
-  // Cleared after surfacing: a subsequent clean flush resolves.
-  await kv.flush();
+  await assert.rejects(() => kv.flush(), (error) => error === boom);
+  assert.deepEqual(observed, [boom, boom], "the failed-key retry is observed without masking the error");
 });
