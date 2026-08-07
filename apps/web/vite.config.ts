@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -9,6 +10,27 @@ import type { Connect } from "vite";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
 const nodeStub = path.resolve(here, "src", "nodeBuiltinStub.ts");
+function buildFenVersion(): string {
+  try {
+    const version = readFileSync(path.join(repoRoot, "fen", "VERSION"), "utf8").trim();
+    return version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function buildWebVersion(): string {
+  try {
+    const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return commit || "dev";
+  } catch {
+    return "dev";
+  }
+}
 
 /** fen's auth.json path, mirroring openai_codex_keychain.fnl's resolution
  * order: FEN_AUTH_DIR, then ${XDG_CONFIG_HOME:-~/.config}/fen. */
@@ -135,6 +157,10 @@ export default defineConfig(({ mode }) => ({
         rewrite: (p) => p.replace(/^\/__codex-proxy/, "/backend-api"),
       },
     },
+  },
+  define: {
+    __FEN_VERSION: JSON.stringify(buildFenVersion()),
+    __FEN_WEB_VERSION: JSON.stringify(buildWebVersion()),
   },
   build: {
     target: "es2022",

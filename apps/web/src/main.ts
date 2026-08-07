@@ -1,6 +1,7 @@
 import "./styles.css";
 import { PROVIDERS, SettingsStore, providerById } from "./settings.js";
 import { bootDemoInBrowser, type DemoSession } from "./browserBoot.js";
+import { DiagnosticsBuffer, FEN_VERSION } from "./diagnostics.js";
 
 // The single-page shell's chrome: a BYO-key settings gate plus the
 // `#fen-app` mount the Fennel DOM presenter renders into. Everything the
@@ -8,6 +9,31 @@ import { bootDemoInBrowser, type DemoSession } from "./browserBoot.js";
 // gate — the litmus test's "HTML shell" TS (docs/architecture/fennel-first.md).
 
 const DB_NAME = "fen-web-demo";
+
+async function copyText(value: string): Promise<void> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+  } catch {
+    // Fall through to the selection-based mobile/browser fallback.
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+  if (!copied) throw new Error("Clipboard access was unavailable");
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -29,6 +55,107 @@ async function main(): Promise<void> {
     throw new Error("fen-web demo: shell markup is missing required elements");
   }
   const appMount = appRoot;
+  const diagnostics = new DiagnosticsBuffer();
+  diagnostics.setContext({
+    fenVersion: FEN_VERSION,
+    fenWebVersion: __FEN_WEB_VERSION,
+    userAgent: navigator.userAgent,
+  });
+
+  // Keep a small host-console tail for on-demand reports. The original
+  // methods remain authoritative; this is observation only and never logs
+  // diagnostic output back through the wrapper.
+  for (const level of ["log", "info", "warn", "error"] as const) {
+    const original = console[level].bind(console);
+    console[level] = ((...args: unknown[]) => {
+      // Preserve the application's logging semantics first. Diagnostics are
+      // strictly observational and a hostile console argument must never
+      // mask a log call that the app itself made.
+      try {
+        original(...args);
+      } finally {
+        try {
+          diagnostics.recordHostConsole(level, args);
+        } catch {
+          // Diagnostics are best effort; never throw from a console wrapper.
+        }
+      }
+    }) as (typeof console)[typeof level];
+  }
+
+  const copyReport = async (button: HTMLButtonElement, error?: unknown): Promise<void> => {
+    // Creation-time label (dataset), not current textContent: a double-click
+    // inside the reset window would otherwise capture "Copied" as the
+    // original and stick there permanently.
+    const originalLabel = button.dataset.fenLabel ?? button.textContent ?? "Copy diagnostics";
+    button.disabled = true;
+    try {
+      await copyText(diagnostics.snapshot(error));
+      button.textContent = "Copied";
+    } catch (copyErr) {
+      try {
+        console.warn("fen-web demo: diagnostics copy failed", copyErr);
+      } catch {
+        // The original console wrapper is also best effort for this fallback.
+      }
+      button.textContent = "Copy failed";
+    } finally {
+      // Restore availability immediately even when clipboard/snapshot code
+      // fails. The delayed label reset uses the caller's original label (error
+      // rows use "Copy", while shell buttons use "Copy diagnostics").
+      button.disabled = false;
+      setTimeout(() => {
+        button.textContent = originalLabel;
+        button.disabled = false;
+      }, 1400);
+    }
+  };
+
+  const copyButton = (label: string, error?: unknown): HTMLButtonElement => {
+    const button = el("button", { type: "button", class: "diagnostics-copy" }, label);
+    button.dataset.fenLabel = label;
+    button.addEventListener("click", () => void copyReport(button, error));
+    return button;
+  };
+
+  // Error rows are produced by the Fennel DOM model. Add controls from JS so
+  // the presenter stays coroutine-safe and does not need a new UI primitive.
+  const ensureErrorRowButtons = (): void => {
+    for (const row of Array.from(appMount.querySelectorAll<HTMLElement>(
+      ".fen-transcript > .row.style-error, .fen-panels .row.style-error",
+    ))) {
+      if (row.querySelector("[data-fen-copy-error]")) continue;
+      const button = el("button", {
+        type: "button",
+        class: "diagnostics-copy row-copy",
+        "data-fen-copy-error": "true",
+      }, "Copy");
+      row.append(button);
+    }
+  };
+  appMount.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const button = target.closest<HTMLButtonElement>("[data-fen-copy-error]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const row = button.closest<HTMLElement>(".row.style-error");
+    if (!row) return;
+    const message = Array.from(row.childNodes)
+      .filter((node) => node !== button)
+      .map((node) => node.textContent ?? "")
+      .join("")
+      .trim();
+    void copyReport(button, { message });
+  });
+  const errorRowObserver = new MutationObserver(ensureErrorRowButtons);
+  errorRowObserver.observe(appMount, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class"],
+  });
 
   // Single source of truth for the running agent VM and its boot lifecycle.
   // A single-flight `booting` promise makes double-submit, submit-racing-
@@ -72,6 +199,7 @@ async function main(): Promise<void> {
 
   const showFatal = (err: unknown): void => {
     const details = errorDetails(err);
+    diagnostics.recordError(err);
     console.error("fen-web demo fatal error", err);
     fatalVisible = true;
     noticeVisible = false;
@@ -85,25 +213,29 @@ async function main(): Promise<void> {
     restartButton = restart;
     restart.addEventListener("click", () => void restartSession());
     updateRestartButton();
-    panel.append(restart);
+    const actions = el("div", { class: "settings-actions" });
+    actions.append(copyButton("Copy diagnostics", err), restart);
+    panel.append(actions);
     settingsRoot.append(panel);
   };
 
   const showUnexpectedPageError = (err: unknown, preserveSettings = false): void => {
     if (noticeVisible) return;
     const details = errorDetails(err);
+    diagnostics.recordError(err);
     console.error("fen-web demo unexpected page error", err);
     noticeVisible = true;
     settingsRoot.classList.remove("hidden");
     if (preserveSettings) {
       const form = settingsRoot.querySelector<HTMLElement>("#settings-form");
-      (form ?? settingsRoot).append(
-        el(
-          "p",
-          { class: "settings-notice", role: "alert" },
-          `An unexpected page error occurred: ${details.message}`,
-        ),
+      const notice = el(
+        "p",
+        { class: "settings-notice", role: "alert" },
+        `An unexpected page error occurred: ${details.message}`,
       );
+      const actions = el("div", { class: "settings-actions" });
+      actions.append(copyButton("Copy diagnostics", err));
+      (form ?? settingsRoot).append(notice, actions);
       return;
     }
     settingsRoot.replaceChildren();
@@ -127,7 +259,7 @@ async function main(): Promise<void> {
       settingsRoot.replaceChildren();
       settingsRoot.classList.add("hidden");
     });
-    actions.append(dismiss);
+    actions.append(dismiss, copyButton("Copy diagnostics", err));
     const restart = el("button", { type: "button", class: "fatal-restart" }, "Restart");
     restartButton = restart;
     restart.addEventListener("click", () => void restartSession());
@@ -250,6 +382,7 @@ async function main(): Promise<void> {
     }
     fatalVisible = false;
     noticeVisible = false;
+    diagnostics.setContext({ provider: providerId });
     // A fresh VM starts with an empty committed DOM model. Remove the old
     // presenter's nodes before its first create batch, or duplicate ids make
     // browser getElementById target the dead VM's nodes.
@@ -258,6 +391,7 @@ async function main(): Promise<void> {
     const pending = (booting = bootDemoInBrowser({
       provider: providerId,
       dbName: DB_NAME,
+      diagnostics,
       onFatal: (err) => handleFatal(err, true),
     }));
     try {
@@ -395,6 +529,7 @@ async function main(): Promise<void> {
     // dev-server-bridged OAuth creds — no key row, save just (re)starts.
     const needsKey = provider.envVar !== "";
     const existing = needsKey ? ((await store.getApiKey(provider.envVar)) ?? "") : "";
+    diagnostics.addSecret(existing);
     const running = session !== undefined || booting !== undefined;
 
     const form = el("form", { class: "settings-form", id: "settings-form" });
@@ -453,7 +588,7 @@ async function main(): Promise<void> {
       { type: "submit", class: "settings-save" },
       running ? "Save & restart" : "Save & start",
     );
-    actions.append(save);
+    actions.append(save, copyButton("Copy diagnostics"));
     if (needsKey && existing) {
       const clear = el("button", { type: "button", class: "settings-clear" }, "Forget key");
       clear.addEventListener("click", () => {
@@ -492,7 +627,10 @@ async function main(): Promise<void> {
         if (booting) return; // a boot is already in flight; ignore re-submit
         save.setAttribute("disabled", "disabled");
         try {
-          if (needsKey) await store.setApiKey(provider.envVar, key);
+          if (needsKey) {
+            diagnostics.addSecret(key);
+            await store.setApiKey(provider.envVar, key);
+          }
           await store.setSelectedProvider(provider.id);
           // Replacing the key must revoke the old VM before a new one boots
           // with the new key snapshot.

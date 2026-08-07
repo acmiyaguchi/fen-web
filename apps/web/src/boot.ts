@@ -7,9 +7,12 @@ import {
   FetchPoller,
   normalizeOps,
   type DomOp,
+  type FetchPollResult,
+  type FetchRequestOptions,
   type HostFetch,
   type HostPreview,
 } from "@fen-web/bindings";
+import type { DiagnosticsBuffer } from "./diagnostics.js";
 
 // The runtime/host wiring for the demo, deliberately kept free of any
 // browser-only (`?raw` import, IndexedDB, real DOM/fetch) coupling so this
@@ -61,6 +64,8 @@ export interface DemoRuntimeDeps {
   cjsonSource?: string;
   /** Await pending kv write-backs (SyncKvCache.flush); optional in tests. */
   flush?: () => Promise<void>;
+  /** Browser-side diagnostics state; captured payloads are summarized by it. */
+  diagnostics?: DiagnosticsBuffer;
   /** Called after a fatal boot/run-loop error has been flushed and the VM closed. */
   onFatal?: (err: unknown) => void | Promise<void>;
   /** Release per-boot host resources after the VM is closed. */
@@ -111,6 +116,10 @@ export async function bootDemo(
   }
 
   const poller = new FetchPoller(deps.fetch);
+  deps.diagnostics?.setContext({
+    provider,
+    ...(opts.model ? { model: opts.model } : {}),
+  });
 
   const rt = await createFenRuntime({
     sources: deps.sources,
@@ -119,8 +128,49 @@ export async function bootDemo(
     host: {
       kv: deps.kv,
       dom_apply: (ops: unknown) => deps.dom.apply(normalizeOps(ops as DomOp[])),
-      fetch_start: (fetchOpts: unknown) => poller.start(fetchOpts as never),
-      fetch_poll: (id: number) => poller.poll(id),
+      // One-way Lua -> JS seam. DiagnosticsBuffer immediately retains only a
+      // bounded scrubbed summary; JS never queries the VM mid-coroutine.
+      // The Fennel side filters control events before this callback is called;
+      // this catch is the second guard against a diagnostics bug poisoning a
+      // live turn coroutine.
+      diagnostics_event: (event: unknown) => {
+        try {
+          deps.diagnostics?.recordBusEvent(event);
+        } catch {
+          // Diagnostics are observational and must never affect the VM.
+        }
+      },
+      // Never retain request bodies or header values: only URL/method and
+      // header names enter the diagnostics ring. Record failures are isolated
+      // from the request transport in both directions of the poll protocol.
+      fetch_start: (fetchOpts: unknown) => {
+        const options = fetchOpts as FetchRequestOptions;
+        try {
+          deps.diagnostics?.record("fetch:start", {
+            url: options.url,
+            method: options.method,
+            headerNames: Object.keys(options.headers ?? {}).sort(),
+          });
+        } catch {
+          // A diagnostics failure must not poison an in-flight request.
+        }
+        return poller.start(options);
+      },
+      fetch_poll: (id: number) => {
+        const result: FetchPollResult = poller.poll(id);
+        if (result.done) {
+          try {
+            deps.diagnostics?.record("fetch:done", {
+              status: result.status,
+              error: result.error,
+              chunksThisPoll: result.chunks.length,
+            });
+          } catch {
+            // A diagnostics failure must not poison an in-flight request.
+          }
+        }
+        return result;
+      },
       fetch_dispose: (id: number) => poller.dispose(id),
       // host.preview: setHtml (preview_refresh) + the async postMessage RPC
       // bridge (preview_query/click/fill/eval/screenshot). Mirrors the
@@ -165,6 +215,11 @@ export async function bootDemo(
       await deps.dispose?.();
     } catch (disposeErr) {
       console.error("fen-web demo: failed to dispose after boot error", disposeErr);
+    }
+    try {
+      deps.diagnostics?.recordError(err);
+    } catch {
+      // Diagnostics are best effort and must not replace the original boot error.
     }
     try {
       await deps.onFatal?.(err);
@@ -220,6 +275,11 @@ export async function bootDemo(
       }
       await finish();
     } catch (err) {
+      try {
+        deps.diagnostics?.recordError(err);
+      } catch {
+        // Diagnostics are best effort and must not replace the run-loop error.
+      }
       console.error("fen-web demo: run loop crashed", err);
       // The VM may have queued writes in the synchronous cache even though
       // the coroutine is poisoned. Drain those writes before closing it;
