@@ -45,15 +45,10 @@
   (let [kv (. _G.__fen_host :kv)
         api (api-factory.make-api :fen-web-integration-test nil {:privileged? true})
         _reg-provider (api.register :provider (openai-provider-spec))
-        ;; Still pcall'd defensively (tool registration is not load-bearing
-        ;; for the headless-turn milestone itself), but no longer working
-        ;; around a known bug: packages/platform/fnl/fen_web/tools/init.fnl's
-        ;; `tool-specs` sequence literal now wraps its tail `require` in
-        ;; `(pick-values 1 ...)`, which discards the second value real Lua
-        ;; searchers (and this runtime's custom searcher) return alongside
-        ;; the module -- previously that second value spliced a stray string
-        ;; into `tool-specs`, crashing `M.register`. See turn.test.ts's
-        ;; assertions below for the registered-tool-names check.
+        ;; Keep registration defensively pcall'd: tool registration is not
+        ;; load-bearing for this headless-turn fixture, while the returned
+        ;; registry snapshot and turn.test.ts assertions still make failures
+        ;; visible without masking them in the provider turn.
         (tools-ok? tools-err) (pcall tools-init.register api)
         registered-tools (icollect [_ info (ipairs (api.list :tools))] info.name)
         _reg-session (sessions-init.register api)

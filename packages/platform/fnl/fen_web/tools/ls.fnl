@@ -5,13 +5,17 @@
 (local util (require :fen_web.tools.util))
 (local vfs (require :fen_web.tools.vfs))
 (local truncate (require :fen_web.tools.truncate))
+(local path-ops (require :fen_web.tools.path_ops))
 
-(fn run-ls [{: path : limit} _ctx ?yield-fn]
-  (let [target (or path ".")
+(fn run-ls [{: path : limit} ctx ?yield-fn]
+  (let [raw-target (or path ".")
+        (target perr) (path-ops.resolve-path raw-target ctx)
         kv (util.get-kv)
         take (math.max 1 (util.int-arg limit truncate.DEFAULT-MAX-LINES))
         explicit-limit? (not= (util.int-arg limit nil) nil)
-        (listing lerr) (vfs.list-dir kv target ?yield-fn)]
+        (listing lerr) (if perr
+                           (values nil perr)
+                           (vfs.list-dir kv target ?yield-fn))]
     (if lerr
         (if (string.find lerr ": Not a directory" 1 true)
             ;; target names a file, not a directory: POSIX `ls` on a

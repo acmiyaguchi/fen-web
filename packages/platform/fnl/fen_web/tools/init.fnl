@@ -25,21 +25,29 @@
    (require :fen_web.tools.edit)
    (require :fen_web.tools.grep)
    (require :fen_web.tools.find)
-   (pick-values 1 (require :fen_web.tools.ls))])
+   (require :fen_web.tools.ls)
+   (require :fen_web.tools.delete)
+   (require :fen_web.tools.move)
+   (pick-values 1 (require :fen_web.tools.tool_search))])
+
+(local web-fetch-tool (pick-values 1 (require :fen_web.tools.web_fetch)))
 
 (local M {})
 
 ;; @doc fen_web.tools.register
 ;; kind: function
 ;; signature: (register api) -> true
-;; summary: Register the browser-native read/write/edit/grep/find/ls tool set under fen's builtin-tools names via api.register :tool.
+;; summary: Register the browser-native workspace tools plus registry-generic tool_search, with web_fetch opt-in through the web boot options.
 ;; tags: fen-web tools register extension
-(fn M.register [api]
+(fn M.register [api ?opts]
   (each [_ spec (ipairs tool-specs)]
-    ;; Same exposure policy as fen's kernel builtin-tools: the core file
-    ;; surface is always provider-visible, not gated behind tool_search.
+    ;; Keep the core workspace surface and tool_search immediately available;
+    ;; specialized browser capabilities use :search exposure below.
     (set spec.exposure :always)
     (api.register :tool spec))
+  (when (and ?opts (?. ?opts :enable-web-fetch))
+    (set web-fetch-tool.exposure :search)
+    (api.register :tool web-fetch-tool))
   true)
 
 M

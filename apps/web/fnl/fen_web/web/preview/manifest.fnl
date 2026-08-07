@@ -9,5 +9,6 @@
 {:name :fen_web_web_preview
  :description "Demo-only preview.* tools driving the sandboxed iframe over host.preview (fen-web#8)."
  :entry-module :fen_web.web.preview
- :reload-modules [:fen_web.web.preview.html
+ :reload-modules [:fen_web.tools.path_ops
+                  :fen_web.web.preview.html
                   :fen_web.web.preview]}

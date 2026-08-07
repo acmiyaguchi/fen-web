@@ -296,14 +296,10 @@ test("one headless agent turn against a stub OpenAI Chat Completions provider, d
     assert.ok(result.events.includes("llm-start"));
     assert.ok(result.events.includes("llm-end"));
 
-    // fen_web.tools.M.register's tail-position `(require :fen_web.tools.ls)`
-    // splice bug (packages/platform/fnl/fen_web/tools/init.fnl:19-25) has
-    // been fixed upstream by wrapping that tail require in
-    // `(pick-values 1 ...)`, so tool registration against the real
-    // extension-loader registry (fen.core.extensions.loader.api) now
-    // succeeds cleanly instead of crashing on "attempt to index a string
-    // value". Assert the success case; if this regresses, tool-specs has
-    // broken again.
+    // Tool registration against the real extension-loader registry must
+    // succeed cleanly instead of crashing on a tail-position multi-return
+    // or a malformed tool spec. Assert the complete default workspace set;
+    // web_fetch is intentionally absent because this boot does not opt in.
     assert.equal(
       result["tools-registered?"],
       true,
@@ -312,8 +308,18 @@ test("one headless agent turn against a stub OpenAI Chat Completions provider, d
     assert.equal(result["tools-register-error"], undefined);
     assert.deepEqual(
       [...result["registered-tool-names"]].sort(),
-      ["edit", "find", "grep", "ls", "read", "write"],
-      "expected exactly the six browser-native tools, with no stray spliced element",
+      [
+        "delete",
+        "edit",
+        "find",
+        "grep",
+        "ls",
+        "move",
+        "read",
+        "tool_search",
+        "write",
+      ],
+      "expected the default browser-native workspace tools, without web_fetch",
     );
 
     // 2. The session backend recorded the turn: both the user and

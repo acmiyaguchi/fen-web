@@ -8,14 +8,18 @@
 (local vfs (require :fen_web.tools.vfs))
 (local glob (require :fen_web.tools.glob))
 (local truncate (require :fen_web.tools.truncate))
+(local path-ops (require :fen_web.tools.path_ops))
 
-(fn run-find [{: pattern : path : limit} _ctx ?yield-fn]
+(fn run-find [{: pattern : path : limit} ctx ?yield-fn]
   (if (or (not pattern) (= pattern ""))
       (util.err "missing 'pattern'")
-      (let [target (or path ".")
-            cap (util.int-arg limit 200)
-            (all werr) (vfs.walk (util.get-kv) target ?yield-fn)]
-        (if werr
+      (let [raw-target (or path ".")
+            (target perr) (path-ops.resolve-path raw-target ctx)
+            cap (util.int-arg limit 200)]
+        (if perr
+            (util.err perr)
+            (let [(all werr) (vfs.walk (util.get-kv) target ?yield-fn)]
+          (if werr
             (util.err werr)
             (let [out []]
               (var truncated? false)
@@ -28,7 +32,7 @@
                 (set scanned (+ scanned 1))
                 (when (and ?yield-fn (= (% scanned 512) 0)) (?yield-fn)))
               (let [(capped _) (truncate.truncate-head (table.concat out "\n") nil ?yield-fn)]
-                (util.ok capped)))))))
+                (util.ok capped)))))))))
 
 {:name :find
  :label "Find"

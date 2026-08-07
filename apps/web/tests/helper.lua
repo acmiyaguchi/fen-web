@@ -18,6 +18,7 @@ local roots = {
   "packages/platform/fnl",
   "fen/packages/core/src",
   "fen/packages/util/src",
+  "fen/packages/fen/src",
 }
 local path_parts = {}
 for _, root in ipairs(roots) do

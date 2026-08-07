@@ -211,7 +211,7 @@
 
     (describe "tool registration"
       (fn []
-        (it "registers the preview.* tools with :always exposure"
+        (it "registers the seven preview.* tools; refresh+console :always, rest :search"
           (fn []
             (let [registered []
                   api {:register (fn [kind spec] (table.insert registered [kind spec]))}]
@@ -220,7 +220,15 @@
               (let [names []]
                 (each [_ [kind spec] (ipairs registered)]
                   (assert.are.equal :tool kind)
-                  (assert.are.equal :always spec.exposure)
+                  ;; preview_refresh (system-prompt entry point) and
+                  ;; preview_console (debugging lifeline) are always-visible;
+                  ;; the rest are tool_search-gated.
+                  (assert.are.equal
+                    (if (or (= spec.name :preview_refresh)
+                            (= spec.name :preview_console))
+                        :always
+                        :search)
+                    spec.exposure)
                   (table.insert names spec.name))
                 (table.sort names)
                 (assert.are.same

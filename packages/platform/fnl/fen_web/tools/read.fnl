@@ -8,6 +8,7 @@
 (local util (require :fen_web.tools.util))
 (local vfs (require :fen_web.tools.vfs))
 (local truncate (require :fen_web.tools.truncate))
+(local path-ops (require :fen_web.tools.path_ops))
 
 (local LINES-BEFORE-YIELD 512)
 
@@ -25,10 +26,13 @@
         (?yield-fn)))
     (table.concat out "\n")))
 
-(fn run-read-one [{: path : offset : limit} ?yield-fn]
+(fn run-read-one [{: path : offset : limit} ctx ?yield-fn]
   (if (or (not path) (= path ""))
       (util.err "missing 'path'")
-      (let [(content rerr) (vfs.read-file (util.get-kv) path)]
+      (let [(resolved perr) (path-ops.resolve-path path ctx)]
+        (if perr
+            (util.err perr)
+            (let [(content rerr) (vfs.read-file (util.get-kv) resolved)]
         (if rerr
             (util.err rerr)
             (if (and (not offset) (not limit))
@@ -37,12 +41,12 @@
                 (let [start (util.int-arg offset 1)
                       take (or (util.int-arg limit nil) math.huge)
                       lines (util.split-lines content)]
-                  (util.ok (read-lines-slice lines start take ?yield-fn))))))))
+                  (util.ok (read-lines-slice lines start take ?yield-fn))))))))))
 
 (fn normalize-read-spec [spec]
   (if (= (type spec) :string) {:path spec} spec))
 
-(fn run-read-batch [paths ?yield-fn]
+(fn run-read-batch [paths ctx ?yield-fn]
   (if (or (not paths) (= (length paths) 0))
       (util.err "missing 'paths'")
       (let [parts []]
@@ -50,19 +54,19 @@
           (let [spec (normalize-read-spec raw)
                 path (?. spec :path)
                 header (.. "==> " (or path "<missing path>") " <==")
-                r (run-read-one (or spec {}) ?yield-fn)]
+                r (run-read-one (or spec {}) ctx ?yield-fn)]
             (table.insert parts (.. header "\n" (util.result-text r)))
             (util.maybe-yield ?yield-fn)))
         (util.ok (table.concat parts "\n\n")))))
 
-(fn run-read [args _ctx ?yield-fn]
+(fn run-read [args ctx ?yield-fn]
   (let [has-path? (and args.path (not= args.path ""))
         has-paths? (not= args.paths nil)]
     (if (and has-path? has-paths?)
         (util.err "provide either 'path' or 'paths', not both")
         has-paths?
-        (run-read-batch args.paths ?yield-fn)
-        (run-read-one args ?yield-fn))))
+        (run-read-batch args.paths ctx ?yield-fn)
+        (run-read-one args ctx ?yield-fn))))
 
 {:name :read
  :label "Read"

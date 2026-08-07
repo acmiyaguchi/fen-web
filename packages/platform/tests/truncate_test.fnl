@@ -44,7 +44,17 @@
         (let [s (string.rep "a" (+ truncate.DEFAULT-MAX-BYTES 1))
               (out truncated?) (truncate.truncate-head s)]
           (assert.is_true truncated?)
-          (assert.is_truthy (string.find out "[truncated: kept head" 1 true)))))))
+          (assert.is_truthy (string.find out "[truncated: kept head" 1 true)))))
+
+    (it "keeps a byte head for a single-line body with no complete line fit"
+      (fn []
+        (let [s (string.rep "a" (* 100 1024))
+              (out truncated?) (truncate.truncate-head s)]
+          (assert.is_true truncated?)
+          (assert.are.equal (string.rep "a" truncate.DEFAULT-MAX-BYTES)
+                            (string.sub out 1 truncate.DEFAULT-MAX-BYTES))
+          (assert.is_truthy (string.find out "[truncated: kept head" 1 true)))))
+  ))
 
 (describe "truncation boundary through the read and grep tools"
   (fn []
