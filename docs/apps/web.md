@@ -318,7 +318,9 @@ The settings panel owns the optional browser notification permission. Its
 only from that user gesture. The always-exposed `notify(title, body?)` tool
 never prompts: a granted permission sends the title/body through the host seam,
 while denied or unavailable permission creates an in-app transcript notice and
-returns a clean `permission not granted` error. The host rate-limits attempts
+returns an explicit fallback error identifying that the in-app notice was shown.
+Notification title/body text is sanitized and capped at 120/500 characters. The
+host rate-limits attempts
 to one every few seconds, and iOS Safari/non-PWA environments use the
 transcript fallback.
 

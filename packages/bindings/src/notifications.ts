@@ -32,6 +32,17 @@ export interface WebHostNotifyOptions {
 }
 
 export const NOTIFY_MIN_INTERVAL_MS = 3000;
+export const NOTIFY_TITLE_MAX_LENGTH = 120;
+export const NOTIFY_BODY_MAX_LENGTH = 500;
+
+/** Remove ASCII controls and bound notification text before it reaches either
+ * the browser API or the transcript. Array.from counts Unicode code points,
+ * so the limit does not split a surrogate pair. */
+export function sanitizeNotificationText(value: unknown, maxLength: number): string {
+  return Array.from(String(value).replace(/[\u0000-\u001f]/g, ""))
+    .slice(0, maxLength)
+    .join("");
+}
 
 function globalNotification(): NotificationConstructor | undefined {
   const value = (globalThis as typeof globalThis & { Notification?: unknown }).Notification;
@@ -83,7 +94,7 @@ export class WebHostNotify implements HostNotify {
 
   constructor(options: WebHostNotifyOptions = {}) {
     this.notification = options.notification ?? globalNotification();
-    this.now = options.now ?? (() => Date.now());
+    this.now = options.now ?? (() => performance.now());
     this.minIntervalMs = Math.max(
       0,
       Math.floor(options.minIntervalMs ?? NOTIFY_MIN_INTERVAL_MS),
@@ -91,6 +102,9 @@ export class WebHostNotify implements HostNotify {
   }
 
   notify(title: string, body?: string): BrowserNotificationResult {
+    const safeTitle = sanitizeNotificationText(title, NOTIFY_TITLE_MAX_LENGTH);
+    const safeBody =
+      body === undefined ? undefined : sanitizeNotificationText(body, NOTIFY_BODY_MAX_LENGTH);
     const now = this.now();
     if (now < this.lastAttempt + this.minIntervalMs) {
       return {
@@ -100,6 +114,9 @@ export class WebHostNotify implements HostNotify {
         error: "notification rate limited",
       };
     }
+    // This limiter is intentionally per WebHostNotify instance: it resets on
+    // shell restart, which is not agent-exploitable because the agent cannot
+    // create or restart the shell-owned host instance.
     // Rate-limit attempts, including permission-gated fallbacks, so a looping
     // agent cannot spam either the OS or the in-app notice path.
     this.lastAttempt = now;
@@ -114,7 +131,7 @@ export class WebHostNotify implements HostNotify {
     }
 
     try {
-      new this.notification!(title, body === undefined ? undefined : { body });
+      new this.notification!(safeTitle, safeBody === undefined ? undefined : { body: safeBody });
       return { ok: true, status: "sent", fallback: false };
     } catch {
       return {

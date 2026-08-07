@@ -7,6 +7,16 @@
 (local json (require :fen.util.json))
 (local events (require :fen.core.extensions.events))
 
+(local TITLE-MAX 120)
+(local BODY-MAX 500)
+
+(fn sanitize-text [value max-length]
+  (let [text (tostring (or value ""))
+        clean (string.gsub text "[%c]" "")]
+    (if (> (length clean) max-length)
+        (string.sub clean 1 max-length)
+        clean)))
+
 (fn fallback-notice [title body]
   (.. "Browser notification unavailable; in-app notice: " title
       (if (and body (not= body "")) (.. " - " body) "")))
@@ -30,8 +40,8 @@
             {:fallback true :error "notification unavailable"}))))
 
 (fn run-notify [args _ctx _yield-fn]
-  (let [title (and args.title (tostring args.title))
-        body (and args.body (tostring args.body))]
+  (let [title (and args.title (sanitize-text args.title TITLE-MAX))
+        body (and args.body (sanitize-text args.body BODY-MAX))]
     (if (or (not title) (= title ""))
         (util.err "missing 'title'")
         (let [result (host-result _G.__fen_host title body)
@@ -39,7 +49,7 @@
           (if result.fallback
               (do
                 (emit-fallback! title body error)
-                (util.err error))
+                (util.err (.. error "; showed in-app notice instead")))
               result.ok
               (util.ok "notification sent")
               (util.err error))))))
@@ -47,7 +57,7 @@
 {:name :notify
  :label "Notify"
  :snippet "Send a browser notification"
- :description "Send a browser notification when you need the user's attention, for example after a long turn or when input is needed. Permission is requested only from the settings panel; if permission is denied or unavailable, an in-app transcript notice is shown and the tool returns a clean error."
+ :description "Send a browser notification when you need the user's attention, for example after a long turn or when input is needed. Permission is requested only from the settings panel; if permission is denied or unavailable, an in-app transcript notice is shown and the tool returns an explicit fallback error."
  :parameters {:type :object
               :properties {:title {:type :string
                                     :description "Short notification title"}

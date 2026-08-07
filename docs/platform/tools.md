@@ -15,7 +15,7 @@ small core workspace set is `:always` exposed; specialized browser tools are
 | --- | --- | --- |
 | `read`, `write`, `edit`, `grep`, `find`, `ls`, `delete`, `move` | always | Browser-native workspace tools over `host.kv`. Their schemas and result conventions mirror fen. Relative paths resolve against the tool context `cwd`; otherwise the virtual filesystem root is `/`. |
 | `tool_search` | always | Registry-generic port of fen's builtin tool search. It searches `ctx.agent.tools` for `:search`-exposed contributions and records activations in `agent.active-tool-names`; it does not depend on desktop-only process/filesystem infrastructure. |
-| `notify` | always | Sends `title` plus optional `body` through the shell-owned browser Notification API. The settings panel may request permission from a user gesture; the tool never prompts. Denied or unavailable permission adds an in-app transcript notice and returns the clean `permission not granted` tool error. The host rate-limits attempts to one every few seconds. |
+| `notify` | always | Sends `title` plus optional `body` through the shell-owned browser Notification API. The settings panel may request permission from a user gesture; the tool never prompts. Title/body are sanitized and capped at 120/500 characters. Denied or unavailable permission adds an in-app transcript notice and returns an explicit fallback error. The host rate-limits attempts to one every few seconds. |
 | `web_fetch` | search (opt-in) | Fetches an HTTP(S) URL through the existing `host.fetch_start`/`fetch_poll`/`fetch_dispose` seam. It is registered only when the web boot option `enableWebFetch` is explicitly `true`; the default is false. The host keeps a bounded head and the tool returns at most about 50KB, framed as untrusted web content. |
 | `preview_refresh`, `preview_query`, `preview_click`, `preview_fill`, `preview_eval`, `preview_screenshot` | search | Demo-only preview tools are activated through `tool_search`; `preview_console`, if present, remains `always` as the debugging lifeline. |
 
@@ -26,7 +26,7 @@ rejected by `vfs.normalize`. A host may additionally supply an optional
 `ctx.workspace-root` boundary for mutating operations, but the tools do not
 promise a narrower root by default.
 
-The notify host result is JSON text before it crosses the Wasmoon boundary. A granted browser permission creates a notification with only the title and optional body (v1 has no icons or actions). If `Notification` is absent, permission is not granted, or construction fails, the Fennel tool emits an `:info` transcript row and returns `error: permission not granted` (or the host's clean availability/rate-limit error); it never calls `requestPermission` from the tool path.
+The notify host result is JSON text before it crosses the Wasmoon boundary. A granted browser permission creates a notification with only the sanitized, bounded title and optional body (v1 has no icons or actions). ASCII control characters are removed; title and body are capped at 120 and 500 characters before both the browser API and transcript fallback. If `Notification` is absent, permission is not granted, or construction fails, the Fennel tool emits an `:info` transcript row and returns an explicit fallback error such as `error: permission not granted; showed in-app notice instead`; rate-limited results do not emit a transcript row. It never calls `requestPermission` from the tool path.
 
 ## Web-fetch decision and safety
 

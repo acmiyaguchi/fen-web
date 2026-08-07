@@ -5,7 +5,10 @@ import {
 } from "@fen-web/runtime";
 import {
   FetchPoller,
+  NOTIFY_BODY_MAX_LENGTH,
+  NOTIFY_TITLE_MAX_LENGTH,
   normalizeOps,
+  sanitizeNotificationText,
   serializePreviewConsoleEntries,
   serializePreviewRpcResult,
   type DomOp,
@@ -212,8 +215,10 @@ export function buildDemoHostTable(
     notify: (title: unknown, body?: unknown) =>
       JSON.stringify(
         deps.notify?.notify(
-          String(title),
-          body === undefined || body === null ? undefined : String(body),
+          sanitizeNotificationText(title, NOTIFY_TITLE_MAX_LENGTH),
+          body === undefined || body === null
+            ? undefined
+            : sanitizeNotificationText(body, NOTIFY_BODY_MAX_LENGTH),
         ) ?? {
           ok: false,
           status: "fallback",

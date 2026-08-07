@@ -62,8 +62,11 @@ export { wrapSrcdoc, PREVIEW_RESPONDER_SOURCE } from "./preview/responder.js";
 
 export {
   browserNotificationPermission,
+  NOTIFY_BODY_MAX_LENGTH,
   NOTIFY_MIN_INTERVAL_MS,
+  NOTIFY_TITLE_MAX_LENGTH,
   requestBrowserNotificationPermission,
+  sanitizeNotificationText,
   WebHostNotify,
 } from "./notifications.js";
 export type {

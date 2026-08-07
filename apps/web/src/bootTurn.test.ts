@@ -367,6 +367,42 @@ test("boot host exposes notify outcomes as JSON text", () => {
   });
 });
 
+test("boot host sanitizes notify inputs before invoking the host", () => {
+  let seenTitle = "";
+  let seenBody: string | undefined;
+  const hostTable = buildDemoHostTable(
+    {
+      sources: new Map(),
+      fetchBackendSource: "",
+      kv: {},
+      dom: { apply: () => undefined },
+      preview: new FakePreview(),
+      notify: {
+        notify: (title, body) => {
+          seenTitle = title;
+          seenBody = body;
+          return { ok: true, status: "sent", fallback: false };
+        },
+      },
+      fetch: new ScriptedFetch(),
+    },
+    new FetchPoller(new ScriptedFetch()),
+  );
+
+  const notify = hostTable.notify as (title: unknown, body?: unknown) => string;
+  const rawTitle = `a\n${String.fromCharCode(0)}${"b".repeat(200)}`;
+  const rawBody = `c\r\n${String.fromCharCode(1)}${"d".repeat(700)}`;
+  const raw = notify(rawTitle, rawBody);
+
+  assert.equal(JSON.parse(raw).ok, true);
+  assert.equal(seenTitle.length, 120);
+  assert.equal(seenBody?.length, 500);
+  assert.equal(seenTitle.includes("\n"), false);
+  assert.equal(seenTitle.includes(String.fromCharCode(0)), false);
+  assert.equal(seenBody?.includes("\r"), false);
+  assert.equal(seenBody?.includes(String.fromCharCode(1)), false);
+});
+
 test("bootDemo drives the demo presenter through one Anthropic turn end to end", async () => {
   const scripted = new ScriptedFetch();
   scripted.enqueue({

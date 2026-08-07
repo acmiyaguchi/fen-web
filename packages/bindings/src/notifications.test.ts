@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   browserNotificationPermission,
+  NOTIFY_BODY_MAX_LENGTH,
   NOTIFY_MIN_INTERVAL_MS,
+  NOTIFY_TITLE_MAX_LENGTH,
   requestBrowserNotificationPermission,
   WebHostNotify,
   type NotificationConstructor,
@@ -113,6 +115,32 @@ test("settings permission helper is the only path that calls requestPermission",
   const permission = await requestBrowserNotificationPermission(StubNotification);
   assert.equal(permission, "granted");
   assert.equal(requested, 1);
+});
+
+test("notify strips controls and caps title/body before constructing a notification", () => {
+  const calls: Array<{ title: string; options?: { body?: string } }> = [];
+  class StubNotification {
+    static permission = "granted" as const;
+
+    constructor(title: string, options?: { body?: string }) {
+      calls.push({ title, options });
+    }
+  }
+
+  const title = `a\n\u0000${"b".repeat(NOTIFY_TITLE_MAX_LENGTH + 20)}`;
+  const body = `c\r\n\u0001${"d".repeat(NOTIFY_BODY_MAX_LENGTH + 20)}`;
+  const result = withNotification(StubNotification, () =>
+    new WebHostNotify({ minIntervalMs: 0 }).notify(title, body),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].title.length, NOTIFY_TITLE_MAX_LENGTH);
+  assert.equal(calls[0].options?.body?.length, NOTIFY_BODY_MAX_LENGTH);
+  assert.equal(calls[0].title.includes("\n"), false);
+  assert.equal(calls[0].title.includes("\0"), false);
+  assert.equal(calls[0].options?.body?.includes("\r"), false);
+  assert.equal(calls[0].options?.body?.includes("\x01"), false);
 });
 
 test("notify rate-limits attempts at the host seam", () => {

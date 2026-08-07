@@ -136,6 +136,10 @@ The notification seam follows the same one-way rule. `__fen_host.notify(title,
 body?)` returns a JSON-text result, never a JavaScript object. The host checks
 `Notification.permission` but does not call `requestPermission`; the shell
 settings panel owns that call and invokes it only from a user gesture. The
-host rate-limits attempts (currently one per three seconds). Permission
-denial, an absent API, or an unsupported browser returns a fallback result
+host rate-limits attempts (currently one per three seconds) per
+`WebHostNotify` instance; resetting that limiter on a shell restart is
+intentional and cannot be controlled by the agent. Title/body text is stripped
+of ASCII controls and capped at 120/500 characters before the browser API is
+called. Permission denial, an absent API, or an unsupported browser returns
+a fallback result
 for the Fennel tool to surface as an in-app transcript notice.
