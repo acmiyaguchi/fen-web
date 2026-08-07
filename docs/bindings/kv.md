@@ -38,8 +38,17 @@ in the first place (coroutine yield-across-C-call hazard).
 - **`IndexedDbKv`** (`packages/bindings/src/kv/indexedDbKv.ts`) — single
   object store (`"kv"`) in a `fen-kv` database, string keys/values, raw
   IndexedDB API (no wrapper dependency, per the no-external-runtime-deps
-  constraint). `list(prefix)` uses an `IDBKeyRange.bound(prefix, prefix +
-  "￿")` cursor scan rather than enumerating the whole store.
+  constraint). `list(prefix)` uses an open-ended `lowerBound(prefix)` cursor
+  and stops at the first key outside the prefix. Writes resolve only after
+  transaction `oncomplete`; quota aborts are surfaced as a
+  `QuotaExceededError`. A blocked upgrade is non-terminal: it is reported,
+  but the open request remains pending and can later succeed when the blocker
+  closes. Unexpected `onclose`/`onversionchange` events start a bounded
+  reconnect sequence (0.5s/2s/8s backoff). Exhaustion surfaces the distinct
+  `IndexedDbUnavailableError`; a later operation gets one lazy revival attempt
+  rather than inheriting a permanently rejected store. `seedIfEmpty` uses one
+  conditional readwrite transaction, so the starter files and completion
+  marker are committed atomically without clobbering existing `fs:` content.
 - **`MemoryKv`** (`packages/bindings/src/kv/memoryKv.ts`) — in-memory stub
   for desktop Busted/Node tests, no browser required.
 - **`SyncKvCache`** (`packages/bindings/src/kv/syncKvCache.ts`) — a
@@ -47,7 +56,14 @@ in the first place (coroutine yield-across-C-call hazard).
   key space into memory once (`SyncKvCache.load`) and writing back
   asynchronously (`flush()` awaits durability). It exposes `sync = true`,
   the capability flag `fen_web.sessions` asserts before registering
-  (see [../platform/shims.md](../platform/shims.md)). This is the demo
+  (see [../platform/shims.md](../platform/shims.md)). Write-back failures are
+  reported immediately through the optional `onError` callback. Failed keys
+  are sticky: every `flush()` retries the current in-memory value (or delete)
+  for each failed key, and `flush()` continues to reject while any such key
+  remains undurable. Once the retry commits, a later flush resolves and the
+  key is actually present/absent in the backing store. Callers should connect
+  `onError` to the browser notice/diagnostics path rather than relying on
+  unload. This is the demo
   shell's answer (issue #7) to the sync-over-async gap below: fen's
   kv-backed seams (`kv_session`, `fs_kv`) call get/put/delete/list
   synchronously, and a single-page, single-VM app can just mirror the

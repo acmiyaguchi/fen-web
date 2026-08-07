@@ -34,6 +34,10 @@ export interface DiagnosticsContext {
   fenVersion?: string;
   fenWebVersion?: string;
   userAgent?: string;
+  /** Stable storage facts kept outside the evictable event ring. */
+  storagePersisted?: boolean;
+  storageUsage?: number;
+  storageQuota?: number;
   events?: readonly DiagnosticEvent[];
   /** Reserved for preview-console capture (#34); omitted when not supplied. */
   previewConsoleTail?: readonly unknown[];
@@ -323,6 +327,9 @@ export function formatDiagnostics(context: DiagnosticsContext, secrets: readonly
     ["fen version", context.fenVersion ?? FEN_VERSION],
     ["fen-web version", context.fenWebVersion ?? "unknown"],
     ["Browser UA", context.userAgent ?? "unknown"],
+    ["Storage persisted", context.storagePersisted ?? "unknown"],
+    ["Storage usage", context.storageUsage ?? "unknown"],
+    ["Storage quota", context.storageQuota ?? "unknown"],
   ];
   for (const [label, value] of fields) {
     lines.push(`- ${label}: ${scrubSecrets(text(value), secrets)}`);
@@ -358,12 +365,21 @@ export interface DiagnosticsOptions {
   secrets?: readonly string[];
 }
 
+export interface DiagnosticsStorageApi {
+  estimate?: () => Promise<{ usage?: number; quota?: number }>;
+}
+
 /** Bounded state holder used by the browser shell and by boot.ts. */
 export class DiagnosticsBuffer {
   private readonly limit: number;
   private readonly events: DiagnosticEvent[] = [];
   private readonly secrets = new Set<string>();
   private readonly hostConsole: unknown[] = [];
+  private readonly collapsed = new Map<
+    string,
+    { summary: string; event: DiagnosticEvent; count: number }
+  >();
+  private storageApi: DiagnosticsStorageApi | undefined;
   private context: Omit<DiagnosticsContext, "events" | "hostConsole"> = {};
 
   constructor(options: DiagnosticsOptions = {}) {
@@ -388,6 +404,47 @@ export class DiagnosticsBuffer {
     };
     this.events.push(event);
     if (this.events.length > this.limit) this.events.splice(0, this.events.length - this.limit);
+  }
+
+  /** Record a recurring diagnostic without consuming one ring slot per
+   * occurrence. The first occurrence is retained; repeats update a compact
+   * counter every ten observations, and a changed summary starts a new event. */
+  recordCollapsed(kind: unknown, payload?: unknown, timestamp = Date.now()): void {
+    const secrets = [...this.secrets];
+    const normalizedKind = scrubSecrets(safeString(kind), secrets);
+    const summary = summarizePayload(payload ?? "", secrets);
+    const previous = this.collapsed.get(normalizedKind);
+    if (previous && previous.summary === summary && this.events.includes(previous.event)) {
+      previous.count += 1;
+      if (previous.count % 10 === 0) {
+        previous.event.timestamp = timestamp;
+        previous.event.summary = `${summary} (repeated ${previous.count} times)`;
+      }
+      return;
+    }
+    this.record(normalizedKind, summary, timestamp);
+    const event = this.events[this.events.length - 1];
+    if (event) this.collapsed.set(normalizedKind, { summary, event, count: 1 });
+  }
+
+  setStorageEstimateSource(storage: DiagnosticsStorageApi | undefined): void {
+    this.storageApi = storage;
+  }
+
+  /** Refresh the cached estimate without making diagnostics/boot depend on
+   * StorageManager availability. Callers can await this before formatting a
+   * report; the stable context then survives event-ring eviction. */
+  async refreshStorageEstimate(storage = this.storageApi): Promise<void> {
+    if (typeof storage?.estimate !== "function") return;
+    try {
+      const estimate = await storage.estimate();
+      this.setContext({
+        ...(typeof estimate.usage === "number" ? { storageUsage: estimate.usage } : {}),
+        ...(typeof estimate.quota === "number" ? { storageQuota: estimate.quota } : {}),
+      });
+    } catch {
+      // A failed opportunistic estimate leaves the last known boot value.
+    }
   }
 
   /** Record the event shape emitted by the Fennel presenter bus listener. */

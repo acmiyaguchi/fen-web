@@ -15,7 +15,13 @@ export type { FetchPollResult } from "./fetch/pollProtocol.js";
 
 export type { HostKv } from "./kv/types.js";
 export { MemoryKv } from "./kv/memoryKv.js";
-export { IndexedDbKv } from "./kv/indexedDbKv.js";
+export {
+  IndexedDbKv,
+  IndexedDbQuotaError,
+  IndexedDbUnavailableError,
+  isQuotaExceededError,
+  type IndexedDbKvOptions,
+} from "./kv/indexedDbKv.js";
 export { SyncKvCache } from "./kv/syncKvCache.js";
 export type { SyncKv } from "./kv/syncKvCache.js";
 export {

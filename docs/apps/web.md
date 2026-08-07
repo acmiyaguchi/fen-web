@@ -64,7 +64,24 @@ see the top-level [README.md](../../README.md) non-goals.
   extensions land in the bundle. fen's kv-backed seams (sessions,
   `fs_kv`) call kv synchronously, so the shell mirrors IndexedDB into a
   `SyncKvCache` (`packages/bindings`) at boot — see
-  [../bindings/kv.md](../bindings/kv.md).
+  [../bindings/kv.md](../bindings/kv.md). The cache's asynchronous write-back
+  callback is connected to the existing non-destructive page-error notice and
+  diagnostics ring, so quota/connection failures are not silently swallowed;
+  failed keys remain pending until a later flush really commits them. The
+  shell flushes the cache periodically and when the document becomes hidden;
+  `beforeunload` remains a final best-effort attempt. The periodic timer is
+  disarmed for `pagehide` and re-armed exactly once on every `pageshow`, so a
+  bfcache restore does not silently lose periodic durability.
+
+  **Storage durability.** At browser boot the shell makes one best-effort
+  `navigator.storage.persist()` request and records its result plus
+  `navigator.storage.estimate()` (`usage`/`quota`) in the stable diagnostics
+  context, as well as the event ring. A fresh estimate is requested before a
+  diagnostics report is copied and opportunistically after a write-back
+  failure, with the boot-time value as the fallback. Missing or denied
+  StorageManager APIs are recorded and do not prevent boot. Persistence is a
+  browser eviction hint rather than a backup: users should still export
+  important work when that feature is added.
 
   **Fatal errors and restart.** A presenter/run-loop failure, an in-VM boot
   error, or an uncaught browser error is shown in the shell as a fatal panel

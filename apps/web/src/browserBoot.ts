@@ -10,6 +10,7 @@ import { bootDemo, type DemoBootOptions, type DemoSession } from "./boot.js";
 import { buildDemoSources } from "./sources.js";
 import { buildStarterFiles } from "./starter.js";
 import type { DiagnosticsBuffer } from "./diagnostics.js";
+import { requestStorageDurability } from "./storageDurability.js";
 
 // Vendored VM sources bundled as raw text (the runtime's Node fs readers
 // don't run in-page — see docs/runtime/boot.md's browser note). These
@@ -26,6 +27,8 @@ export interface BrowserBootOptions extends DemoBootOptions {
   dbName?: string;
   /** Browser-side ring buffer for bus/fetch/fatal diagnostics. */
   diagnostics?: DiagnosticsBuffer;
+  /** Called for asynchronous SyncKvCache write-back failures. */
+  onWriteBackError?: (err: unknown) => void;
   /** Called after a fatal boot/run-loop error has been flushed and the VM closed. */
   onFatal?: (err: unknown) => void | Promise<void>;
 }
@@ -40,7 +43,27 @@ export interface BrowserBootOptions extends DemoBootOptions {
 export async function bootDemoInBrowser(
   opts: BrowserBootOptions = {},
 ): Promise<DemoSession> {
-  const kvBacking = new IndexedDbKv(opts.dbName ?? "fen-web-demo");
+  // Fire-and-forget: persist() may gate on a permission prompt in some
+  // browsers, and boot must not stall behind a dialog. The probe records
+  // its outcome into the stable diagnostics context whenever it settles.
+  void requestStorageDurability(
+    typeof navigator === "object" ? navigator.storage : undefined,
+    opts.diagnostics,
+  ).catch(() => undefined);
+  const kvBacking = new IndexedDbKv(
+    opts.dbName ?? "fen-web-demo",
+    undefined,
+    undefined,
+    {
+      onBlocked: (name) => {
+        try {
+          opts.diagnostics?.recordCollapsed("kv:open-blocked", { database: name });
+        } catch {
+          // Diagnostics are observational and must not affect the open.
+        }
+      },
+    },
+  );
   let preview: WebHostPreview | undefined;
   let handedOff = false;
   const dispose = async (): Promise<void> => {
@@ -107,7 +130,21 @@ export async function bootDemoInBrowser(
   // fen's kv-backed seams (sessions, fs_kv) call kv synchronously; mirror
   // the store into a synchronous cache at boot (see SyncKvCache). Loading
   // here also captures the current stored API key for in-VM resolution.
-  const kv = await SyncKvCache.load(kvBacking);
+  const kv = await SyncKvCache.load(kvBacking, (err) => {
+    try {
+      opts.diagnostics?.recordCollapsed("kv:write-back-failed", err);
+      void opts.diagnostics?.refreshStorageEstimate();
+    } catch {
+      // Diagnostics are best effort and must not replace the storage error.
+    }
+    try {
+      opts.onWriteBackError?.(err);
+    } catch (callbackErr) {
+      // A page notice is observational; SyncKvCache.flush must still be able
+      // to reject with the original write-back error.
+      console.error("fen-web demo: write-back failure callback failed", callbackErr);
+    }
+  });
   const dom = new WebHostDomApply();
   preview = new WebHostPreview({ mountId: "fen-preview" });
 
