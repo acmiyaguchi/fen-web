@@ -178,7 +178,24 @@
           (set s.thinking? false)
           (set s.running-label nil)
           (set s.cancelling? false)
-          (set s.turn-start 0))
+          (set s.turn-start 0)
+          ;; /new and session-switch reset the conversation: the token/cost
+          ;; status counts a session, so clear cumulative + last-round totals
+          ;; too (else the previous session's tokens linger in the bar).
+          (set s.cum-input 0)
+          (set s.cum-output 0)
+          (set s.cum-cache-read 0)
+          (set s.cum-cache-write 0)
+          (set s.last-input 0)
+          (set s.last-output 0)
+          (set s.last-cache-read 0)
+          (set s.last-cache-write 0)
+          (set s.turn-input 0)
+          (set s.turn-output 0)
+          (set s.turn-cache-read 0)
+          (set s.turn-cache-write 0)
+          (set s.usage-seen? false)
+          (set s.turn-usage? false))
 
         (= ev.type :llm-start)
         (do (set s.thinking? true)

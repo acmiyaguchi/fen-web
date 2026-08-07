@@ -262,8 +262,12 @@
     (when (= (string.sub line 1 1) "/")
       (let [body (trim (string.sub line 2))
             (name args) (string.match body "^(%S+)%s*(.-)%s*$")]
-        {:name (and name (string.lower name))
-         :args (or args "")}))))
+        ;; A lone "/" (or "/   ") has no command name — treat it as ordinary
+        ;; input (nil) rather than dispatching to a bogus "Unknown command:
+        ;; /nil" branch.
+        (when name
+          {:name (string.lower name)
+           :args (or args "")})))))
 
 ;; @doc fen_web.web.boot.open-or-resume-session
 ;; kind: function

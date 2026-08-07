@@ -126,6 +126,18 @@
         (assert.are.equal 300 state.status-info.turn-input)
         (assert.are.equal 100 state.status-info.turn-output)))
 
+    (it "resets cumulative token totals on :reset-conversation (/new, switch)"
+      (fn []
+        (ingest.append-event {:type :llm-start})
+        (ingest.append-event {:type :llm-end
+                              :usage {:input 1200 :output 400}})
+        (assert.are.equal 1200 state.status-info.cum-input)
+        (ingest.append-event {:type :reset-conversation})
+        (assert.are.equal 0 state.status-info.cum-input)
+        (assert.are.equal 0 state.status-info.cum-output)
+        (assert.are.equal 0 state.status-info.turn-input)
+        (assert.is_false state.status-info.usage-seen?)))
+
     (it "does not reuse or add stale usage when a round has no usage event"
       (fn []
         (ingest.append-event {:type :llm-end

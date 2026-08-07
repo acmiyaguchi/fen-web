@@ -61,6 +61,9 @@
           (assert.are.equal "unknown" unknown-command.name)
           (assert.are.equal "arg" unknown-command.args)
           (assert.is_nil (boot.parse-command "normal message"))
+          ;; A lone "/" (or whitespace-only body) is not a command.
+          (assert.is_nil (boot.parse-command "/"))
+          (assert.is_nil (boot.parse-command "/   "))
           (assert.are.equal "normal message" forwarded.line)
           (assert.is_true forwarded.opts.emit-user?))))
 
