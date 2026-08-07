@@ -1,0 +1,42 @@
+{
+  "name": "persist a file before a fatal restart",
+  "turns": [
+    {
+      "request": {
+        "userText": "Persist a file before the crash."
+      },
+      "response": {
+        "fixture": "restart-write.sse",
+        "contentType": "text/event-stream"
+      }
+    },
+    {
+      "request": {
+        "toolResultId": "restart-write-1"
+      },
+      "response": {
+        "fixture": "restart-final.sse",
+        "contentType": "text/event-stream"
+      }
+    },
+    {
+      "request": {
+        "userText": "After the restart, read back the survival file."
+      },
+      "response": {
+        "fixture": "restart-read.sse",
+        "contentType": "text/event-stream"
+      }
+    },
+    {
+      "request": {
+        "toolResultId": "restart-read-1",
+        "toolResultText": "workspace survives restart"
+      },
+      "response": {
+        "fixture": "restart-postfinal.sse",
+        "contentType": "text/event-stream"
+      }
+    }
+  ]
+}

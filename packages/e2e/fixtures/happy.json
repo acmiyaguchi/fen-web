@@ -1,0 +1,9 @@
+{
+  "name": "assistant text",
+  "turns": [
+    {
+      "request": { "userText": "Say hello from the scripted provider." },
+      "response": { "fixture": "happy.sse", "contentType": "text/event-stream" }
+    }
+  ]
+}

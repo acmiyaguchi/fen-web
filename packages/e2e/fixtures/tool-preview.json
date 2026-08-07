@@ -1,0 +1,17 @@
+{
+  "name": "write a file, refresh the preview, then answer",
+  "turns": [
+    {
+      "request": { "userText": "Write the e2e preview file and refresh the preview." },
+      "response": { "fixture": "tool-write.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "write-tool-1" },
+      "response": { "fixture": "tool-refresh.sse", "contentType": "text/event-stream" }
+    },
+    {
+      "request": { "toolResultId": "preview-tool-1" },
+      "response": { "fixture": "tool-final.sse", "contentType": "text/event-stream" }
+    }
+  ]
+}

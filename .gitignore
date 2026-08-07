@@ -6,3 +6,7 @@ dist-test/
 /result
 /result-*
 .envrc.local
+
+# Playwright outputs (packages/e2e)
+test-results/
+playwright-report/
