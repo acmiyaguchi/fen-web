@@ -47,10 +47,23 @@ asserts the page assembler never emits the stored API key.
 |---|---|
 | `preview_set_html(html)` | render `html` into the iframe (`preview_refresh`); creates the `<iframe sandbox="allow-scripts">` on first use |
 | `preview_rpc_start(req)` | begin one RPC (`{method, selector?, value?, expr?}`); returns a numeric id, non-blocking |
-| `preview_rpc_poll(id)` | `{done, result?}` — `result` is `{ok, value?, error?}` once the iframe replies |
+| `preview_rpc_poll(id)` | `{done, result?}` — `result` is `{ok, value?, error?}` once the iframe replies; arbitrary non-string `value` payloads are JSON text before the result crosses into Lua |
 | `preview_rpc_dispose(id)` | drop terminal state for a completed RPC (mandatory cleanup) |
 | `preview_console_drain()` | synchronously drain iframe console/error entries since the last drain or `preview_set_html` |
 | `preview_console_uncaught_count()` | count unread uncaught errors without draining (used for terse auto-surfacing markers) |
+
+### RPC result JSON-text boundary
+
+`preview_rpc_poll` is a Wasmoon host seam, so an iframe result's arbitrary
+object/array value must never cross into Lua as a JavaScript object. The real
+`WebHostPreview`, `FakePreview`, and the `boot.ts` host table all enforce the
+same contract: string values remain unquoted tool text, while every other
+present value is `JSON.stringify`-ed into text before Lua sees it. An absent
+value remains absent and is rendered as `null` by the Fennel tool wrapper.
+`rpc-result->tool` accepts only this text/absent shape; it deliberately rejects
+other host values rather than handing proxy userdata to cjson. This keeps the
+human-visible JSON text for query/click/fill/screenshot and object-valued eval
+unchanged while making the JS/Lua boundary safe.
 
 The RPC is asynchronous (a round trip to another context), so — like
 `host.fetch` — the Fennel side starts, polls, and yields the turn coroutine

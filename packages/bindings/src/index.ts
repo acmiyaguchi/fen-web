@@ -55,7 +55,7 @@ export {
   PREVIEW_CONSOLE_MAX_TEXT,
   serializePreviewConsoleEntries,
 } from "./preview/console.js";
-export { WebHostPreview } from "./preview/webHostPreview.js";
+export { WebHostPreview, serializePreviewRpcResult } from "./preview/webHostPreview.js";
 export type { WebHostPreviewOptions } from "./preview/webHostPreview.js";
 export { FakePreview } from "./preview/fakePreview.js";
 export { wrapSrcdoc, PREVIEW_RESPONDER_SOURCE } from "./preview/responder.js";

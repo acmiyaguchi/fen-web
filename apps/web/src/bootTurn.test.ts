@@ -13,6 +13,7 @@ import {
   type FetchResult,
   type HostFetch,
   type HostKv,
+  type HostPreview,
   ScriptedFetch,
   SyncKvCache,
   seedIfEmptyKv,
@@ -232,19 +233,23 @@ function openaiFixtureFetch(text: string): {
   };
 }
 
-function anthropicToolUseSse(name: string, id = "call-1"): string[] {
+function anthropicToolUseSse(
+  name: string,
+  id = "call-1",
+  input: Record<string, unknown> = {},
+): string[] {
   const frame = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`;
   return [
     frame({ type: "message_start", message: { usage: { input_tokens: 8 } } }),
     frame({
       type: "content_block_start",
       index: 0,
-      content_block: { type: "tool_use", id, name, input: {} },
+      content_block: { type: "tool_use", id, name, input },
     }),
     frame({
       type: "content_block_delta",
       index: 0,
-      delta: { type: "input_json_delta", partial_json: "{}" },
+      delta: { type: "input_json_delta", partial_json: JSON.stringify(input) },
     }),
     frame({ type: "content_block_stop", index: 0 }),
     frame({ type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 1 } }),
@@ -284,6 +289,29 @@ function statusText(dom: FakeDom): string {
     .map((id) => dom.get(id).text)
     .join(" ");
 }
+
+test("boot host exposes preview_rpc_poll values as JSON text", () => {
+  const preview = new FakePreview(() => ({ ok: true, value: { clicked: true } }));
+  const hostTable = buildDemoHostTable(
+    {
+      sources: new Map(),
+      fetchBackendSource: "",
+      kv: {},
+      dom: { apply: () => undefined },
+      preview,
+      fetch: new ScriptedFetch(),
+    },
+    new FetchPoller(new ScriptedFetch()),
+  );
+
+  const start = hostTable.preview_rpc_start as (req: unknown) => number;
+  const poll = hostTable.preview_rpc_poll as (id: number) => unknown;
+  const id = start({ method: "click", selector: "#go" });
+  assert.deepEqual(poll(id), {
+    done: true,
+    result: { ok: true, value: '{"clicked":true}' },
+  });
+});
 
 test("boot host exposes preview_console_drain as bounded JSON text", () => {
   const preview = new FakePreview();
@@ -923,6 +951,99 @@ test("bootDemo preview_console crosses the real wasmoon boundary as JSON text", 
   await runUntil(() => stopped);
   await stopPromise;
   assert.ok(stopped, "session.stop() should resolve after cooperative teardown");
+});
+
+test("bootDemo preview_click returns an object result across the real Wasmoon boundary", async () => {
+  const scripted = new ScriptedFetch();
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicToolUseSse("preview_click", "click-1", { selector: "#go" }),
+  });
+  scripted.enqueue({
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    chunks: anthropicSse("clicked"),
+  });
+  const recorder = recordingFetch(scripted);
+  const preview = new FakePreview(() => ({ ok: true, value: { clicked: true } }));
+  // Deliberately unwrap the fake's serialized value to model the pre-fix
+  // host seam: bootDemo must serialize this arbitrary object before Wasmoon.
+  const rawPreview: HostPreview = {
+    setHtml: (html) => preview.setHtml(html),
+    rpcStart: (req) => preview.rpcStart(req),
+    rpcPoll: (id) => {
+      const poll = preview.rpcPoll(id);
+      return {
+        done: poll.done,
+        result: poll.result
+          ? {
+              ...poll.result,
+              ...(poll.result.value !== undefined
+                ? { value: JSON.parse(String(poll.result.value)) }
+                : {}),
+            }
+          : undefined,
+      };
+    },
+    rpcDispose: (id) => preview.rpcDispose(id),
+    drainConsole: () => preview.drainConsole(),
+    uncaughtConsoleErrors: () => preview.uncaughtConsoleErrors(),
+    previewConsoleTail: () => preview.previewConsoleTail(),
+    dispose: () => preview.dispose(),
+  };
+  const dom = new FakeDom("fen-app");
+  const tasks: (() => void)[] = [];
+  let fatal: unknown;
+  const session = await bootDemo(
+    { provider: "anthropic", model: "claude-haiku-4-5" },
+    {
+      sources: buildSources(),
+      fetchBackendSource: fetchBackendSource(),
+      kv: makeSyncKv(),
+      dom,
+      preview: rawPreview,
+      fetch: recorder.fetch,
+      schedule: (fn) => void tasks.push(fn),
+      onFatal: (err) => {
+        fatal = err;
+      },
+    },
+  );
+
+  await drainTasks(tasks, () => dom.exists("fen-input"));
+  assert.ok(dom.exists("fen-input"), "presenter should boot before the tool call");
+  dom.apply([{ op: "prop", id: "fen-input", name: "value", value: "click" } as DomOp]);
+  dom.emit("fen-inputbar", "submit");
+  await drainTasks(tasks, () => recorder.requests.length >= 2 || fatal !== undefined, 8000);
+
+  assert.equal(fatal, undefined, "an object-valued preview RPC must not crash Wasmoon/cjson");
+  assert.equal(recorder.requests.length, 2, "the tool turn should make a follow-up provider request");
+  const body = JSON.parse(recorder.requests[1].body ?? "{}") as {
+    messages?: Array<{ content?: unknown }>;
+  };
+  const toolResultText = (body.messages ?? [])
+    .flatMap((message) => {
+      if (!Array.isArray(message.content)) return [];
+      return message.content as Array<{ type?: unknown; content?: unknown }>;
+    })
+    .filter((block) => block.type === "tool_result")
+    .flatMap((block) => {
+      if (typeof block.content === "string") return [block.content];
+      if (!Array.isArray(block.content)) return [];
+      return (block.content as Array<{ text?: unknown }>)
+        .filter((part) => typeof part.text === "string")
+        .map((part) => part.text as string);
+    });
+  assert.deepEqual(toolResultText, ['{"clicked":true}']);
+
+  let stopped = false;
+  const stopPromise = session.stop().then(() => {
+    stopped = true;
+  });
+  await drainTasks(tasks, () => stopped);
+  await stopPromise;
+  assert.ok(stopped, "session.stop() should resolve after the boundary regression test");
 });
 
 test("bootDemo turns a raw JS preview-console array into a clean tool error", async () => {
