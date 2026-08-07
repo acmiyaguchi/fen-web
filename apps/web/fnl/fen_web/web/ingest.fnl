@@ -31,6 +31,9 @@
         (table.concat parts "\n"))
       (tostring (or content ""))))
 
+(fn kind? [value keyword text]
+  (or (= value keyword) (= value text)))
+
 (fn copy-event [ev]
   (let [out {}]
     (each [k v (pairs ev)]
@@ -169,6 +172,14 @@
         (each [k v (pairs (or ev.info {}))]
           (tset s k v))
 
+        (= ev.type :reset-conversation)
+        (do
+          (set state.transcript [])
+          (set s.thinking? false)
+          (set s.running-label nil)
+          (set s.cancelling? false)
+          (set s.turn-start 0))
+
         (= ev.type :llm-start)
         (do (set s.thinking? true)
             (set s.last-usage? false)
@@ -250,5 +261,65 @@
         ;; presenter-control event that would only duplicate status/redraw.
         (not (= ev.type :redraw))
         (table.insert state.transcript (copy-event ev)))))
+
+(fn append-hydrated-assistant! [msg]
+  (let [content msg.content]
+    (if (= (type content) :string)
+        (M.append-event {:type :assistant-text :text content :final? true})
+        (= (type content) :table)
+        (let [visible []]
+          (each [i block (ipairs content)]
+            (when (and (= (type block) :table)
+                       (or (kind? block.type :text "text")
+                           (kind? block.type :thinking "thinking")))
+              (table.insert visible i)))
+          (let [last-visible (. visible (length visible))]
+            (each [i block (ipairs content)]
+              (when (= (type block) :table)
+                (if (kind? block.type :thinking "thinking")
+                    (when (not= (or block.thinking "") "")
+                      (M.append-event
+                        {:type :assistant-thinking
+                         :text block.thinking
+                         :final? (= i last-visible)}))
+                    (kind? block.type :text "text")
+                    (when (not= (or block.text "") "")
+                      (M.append-event
+                        {:type :assistant-text
+                         :text block.text
+                         :final? (= i last-visible)}))
+                    (or (kind? block.type :tool-call "tool-call")
+                        (kind? block.type :tool-use "tool_use"))
+                    (M.append-event
+                      {:type :tool-call
+                       :name block.name
+                       :arguments (or block.arguments block.input)
+                       :id block.id})))))))))
+
+;; @doc fen_web.web.ingest.hydrate!
+;; kind: function
+;; signature: (hydrate! messages) -> nil
+;; summary: Replace the presenter's transcript with local rows reconstructed from canonical persisted session messages; this is used for boot resume and session switching without emitting provider turns.
+;; tags: demo ingest sessions hydration
+(fn M.hydrate! [messages]
+  (set state.transcript [])
+  (each [_ msg (ipairs (or messages []))]
+    (when (= (type msg) :table)
+      (if (or (kind? msg.role :user "user")
+              (kind? msg.role :human "human"))
+          (M.append-event {:type :user :text (content->text msg.content)})
+          (or (kind? msg.role :assistant "assistant")
+              (kind? msg.role :model "model"))
+          (append-hydrated-assistant! msg)
+          (or (kind? msg.role :tool "tool")
+              (kind? msg.role :tool-result "tool-result"))
+          (M.append-event
+            {:type :tool-result
+             :name (or msg.tool-name msg.name)
+             :id (or msg.tool-call-id msg.id)
+             :result {:content msg.content
+                      :details msg.details
+                      :is-error? msg.is-error?}}))))
+  nil)
 
 M

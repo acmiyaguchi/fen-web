@@ -287,6 +287,7 @@ its fetch poller aborts all remaining transports before closing the runtime.
   stretch and are intentionally not included. Unit coverage for the tree,
   reset, and ZIP round-trip is in `src/workspacePanel.test.ts`; browser e2e
   does not exercise the download prompt, so ZIP parsing is tested in Node.
+- **#40 — session management and slash commands (implemented).** Browser boot resumes the newest non-empty session for the configured workspace from the kv backend and hydrates its canonical messages into local transcript rows without re-appending them. The minimal command surface is `/new` (fresh conversation), `/sessions` (newest-first list with ids, timestamps, summaries, and message counts), `/sessions use <id>` (switch and re-render), `/sessions delete <id>` (delete, or start a replacement when deleting the active session), and `/help`. Unknown slash commands render a local error; non-slash input still follows the normal provider turn and Stop/cancellation path. Session deletion removes metadata, entries, and secondary indexes from the kv backend. Transcript export is intentionally deferred to the workspace/export work in #41 because there is no cheap stable browser download seam in this lane. **Follow-up:** kv sessions still append one record per message and do not compact old transcripts; compaction remains out of scope for #40.
 
 ## Sandboxing invariant
 

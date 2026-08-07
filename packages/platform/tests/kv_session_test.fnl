@@ -179,6 +179,25 @@
           (backend.close s)
           (assert.is_nil (backend.find "/proj" "nope")))))
 
+    (it "deletes a session's entries, metadata, and index record"
+      (fn []
+        (let [s (backend.open "/proj" {:id "to-delete"})]
+          (backend.append s (user-message "remove me"))
+          (backend.close s)
+          (assert.is_true (backend.delete "to-delete"))
+          (assert.is_nil (kv.get "session:to-delete:meta"))
+          (assert.are.equal 0 (length (kv.list "session:to-delete:entry:")))
+          (assert.are.equal 0 (length (kv.list "session-index:--proj--:")))
+          (assert.is_nil (backend.open-existing "to-delete"))
+          (assert.is_nil (backend.find "/proj" "to-delete"))
+          (assert.is_false (backend.delete "to-delete")))))
+
+    (it "deletes an open header-only session even before its first append"
+      (fn []
+        (let [s (backend.create "/proj")]
+          (assert.is_true (backend.delete s))
+          (assert.is_nil (backend.open-existing s.id)))))
+
     (it "acquire-lock always succeeds and its release is a no-op callable"
       (fn []
         (let [release (backend.acquire-lock {:id "any"})]

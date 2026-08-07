@@ -53,6 +53,7 @@
 (local turn-submit (require :fen.turn_submit))
 (local turn-lifecycle (require :fen.turn_lifecycle))
 (local session-lifecycle (require :fen.session_lifecycle))
+(local web-ingest (require :fen_web.web.ingest))
 
 (local M {})
 
@@ -251,6 +252,176 @@
 (fn M.flush-closure [backend agent session]
   (session-lifecycle.make-flush backend agent session 0))
 
+;; @doc fen_web.web.boot.parse-command
+;; kind: function
+;; signature: (parse-command line) -> {:name string :args string}|nil
+;; summary: Parse only slash-prefixed input into a command name and trimmed argument string; ordinary messages return nil and remain on the normal provider-turn path.
+;; tags: demo boot slash commands
+(fn M.parse-command [line]
+  (let [line (or line "")]
+    (when (= (string.sub line 1 1) "/")
+      (let [body (trim (string.sub line 2))
+            (name args) (string.match body "^(%S+)%s*(.-)%s*$")]
+        {:name (and name (string.lower name))
+         :args (or args "")}))))
+
+;; @doc fen_web.web.boot.open-or-resume-session
+;; kind: function
+;; signature: (open-or-resume-session backend cwd) -> {:session :messages :resumed?}
+;; summary: Resume the newest non-empty session for a cwd and return its canonical messages, or allocate a new session when none exists.
+;; tags: demo boot sessions resume
+(fn M.open-or-resume-session [backend cwd]
+  (let [latest (backend.latest cwd)]
+    (if latest
+        (let [messages (or (backend.load latest) [])
+              session (backend.open-existing latest)]
+          (if session
+              {:session session :messages messages :resumed? true}
+              {:session (backend.open cwd) :messages [] :resumed? false}))
+        {:session (backend.open cwd) :messages [] :resumed? false})))
+
+(fn emit-local! [type text]
+  (events.emit {:type type :text text}))
+
+(fn session-cwd [state]
+  (or (?. state.opts :cwd) "/workspace"))
+
+(fn install-session! [state backend session messages ?close-current?]
+  (when (and ?close-current? state.close-session state.session)
+    (state.close-session state.session))
+  (set state.session session)
+  (session-backend-registry.set-info!
+    (session-lifecycle.backend-info backend session) session)
+  (set state.agent
+       (state.make-agent-from-opts state.opts state.on-event state.agent-extra))
+  (set state.agent.messages [])
+  (each [_ message (ipairs (or messages []))]
+    (table.insert state.agent.messages message))
+  (set state.flush
+       (state.make-flush state.agent state.session (length (or messages []))))
+  (events.emit {:type :reset-conversation})
+  (web-ingest.hydrate! messages)
+  (events.emit {:type :set-status-info
+                :info {:provider state.opts.provider
+                       :model state.agent.model
+                       :thinking-status state.agent.thinking-status}})
+  state.session)
+
+(fn format-session-record [index record]
+  (.. (tostring index) ". " (tostring (or record.id record.path "?"))
+      " — " (tostring (or record.title "untitled"))
+      " (" (tostring (or record.timestamp "unknown time")) ", "
+      (tostring (or record.message-count 0)) " messages)"))
+
+(fn list-sessions! [state]
+  (let [backend state.session-backend
+        records (if (and backend backend.list)
+                    (backend.list (session-cwd state) 50)
+                    [])]
+    (if (= (length records) 0)
+        (emit-local! :info "No sessions for this workspace.")
+        (do
+          (emit-local! :info "Sessions (newest first):")
+          (each [i record (ipairs records)]
+            (emit-local! :info (format-session-record i record)))
+          (emit-local! :info "Use /sessions use <id> or /sessions delete <id>.")))))
+
+(fn resume-session! [state target]
+  (let [backend state.session-backend
+        cwd (session-cwd state)
+        id (and backend (backend.find cwd target))]
+    (if (not id)
+        (emit-local! :error (.. "Session not found: " (tostring target)))
+        (let [messages (or (backend.load id) [])
+              session (backend.open-existing id)]
+          (if (not session)
+              (emit-local! :error (.. "Could not open session: " (tostring id)))
+              (do
+                (install-session! state backend session messages true)
+                (emit-local! :info
+                             (.. "Resumed session " (tostring id) " ("
+                                 (tostring (length messages)) " messages)."))))))))
+
+(fn new-session! [state]
+  (if state.busy?
+      (emit-local! :error "Cannot start a new session while a turn is running.")
+      (let [backend state.session-backend
+            session (backend.open (session-cwd state))]
+        (install-session! state backend session [] true)
+        (emit-local! :info "New session started."))))
+
+(fn delete-session! [state target]
+  (let [backend state.session-backend
+        cwd (session-cwd state)
+        id (and backend (backend.find cwd target))]
+    (if (not id)
+        (emit-local! :error (.. "Session not found: " (tostring target)))
+        (if (or state.busy? (not= (type backend.delete) :function))
+            (emit-local! :error
+                         (if state.busy?
+                             "Cannot delete a session while a turn is running."
+                             "The active session backend cannot delete sessions."))
+            (let [active? (and state.session
+                                (= (tostring state.session.id) (tostring id)))]
+              (backend.delete id)
+              (if active?
+                  (do
+                    (let [session (backend.open cwd)]
+                      (install-session! state backend session [] true))
+                    (emit-local! :info
+                                 (.. "Deleted session " (tostring id)
+                                     "; started a new session.")))
+                  (emit-local! :info (.. "Deleted session " (tostring id) "."))))))))
+
+(fn sessions-command! [state args]
+  (let [(action target) (string.match (trim args) "^(%S+)%s*(.*)$")
+        action (and action (string.lower action))
+        target (trim (or target ""))]
+    (if (or (= action nil) (= action "") (= action "list"))
+        (list-sessions! state)
+        (= action "delete")
+        (if (= target "")
+            (emit-local! :error "Usage: /sessions delete <id>")
+            (delete-session! state target))
+        (or (= action "use") (= action "resume"))
+        (if (= target "")
+            (emit-local! :error "Usage: /sessions use <id>")
+            (if state.busy?
+                (emit-local! :error "Cannot switch sessions while a turn is running.")
+                (resume-session! state target)))
+        ;; A bare target is a convenient shorthand for switching from a list.
+        (if state.busy?
+            (emit-local! :error "Cannot switch sessions while a turn is running.")
+            (resume-session! state (trim args))))))
+
+(fn help-command! []
+  (each [_ line (ipairs [
+    "/new                 Start a fresh conversation"
+    "/sessions            List saved sessions"
+    "/sessions use <id>  Resume a saved session"
+    "/sessions delete <id>  Delete a saved session"
+    "/help                Show this help"])]
+    (emit-local! :info line)))
+
+(fn dispatch-command! [state command]
+  (case command.name
+    "new" (new-session! state)
+    "sessions" (sessions-command! state command.args)
+    "help" (help-command!)
+    _ (emit-local! :error (.. "Unknown command: /" (tostring command.name)
+                              ". Try /help."))))
+
+;; @doc fen_web.web.boot.submit-line!
+;; kind: function
+;; signature: (submit-line! state line) -> result|nil
+;; summary: Route slash-prefixed input to the local command dispatcher and leave ordinary input on the shared turn-submit path.
+;; tags: demo boot slash commands turns
+(fn M.submit-line! [state line]
+  (let [command (M.parse-command line)]
+    (if command
+        (dispatch-command! state command)
+        (state.submit-user-turn! line {:emit-user? true}))))
+
 ;; @doc fen_web.web.boot.on-tick
 ;; kind: function
 ;; signature: (on-tick state) -> nil
@@ -382,11 +553,15 @@
       (M.load-extension! :fen_web.web.manifest)
       (session-backend-registry.set-active! :kv)
       (let [backend (session-backend-registry.find :kv)
-            session (backend.open (or opts.cwd "/workspace"))
+            cwd (or opts.cwd "/workspace")
+            opened (M.open-or-resume-session backend cwd)
+            session opened.session
+            loaded-messages opened.messages
             _info (session-backend-registry.set-info!
                     (session-lifecycle.backend-info backend session) session)
             model (M.model-for opts provider)
-            agent (agent-mod.make-agent
+            make-agent (fn []
+                         (agent-mod.make-agent
                     {:provider-name (if codex? :openai-codex
                                         (if (= provider "openai") :openai
                                             (if (= provider "openrouter")
@@ -418,8 +593,12 @@
                      :tool-context (fn [_]
                                      {:cwd (or opts.cwd "/workspace")
                                       :workspace-root "/"})
-                     :on-event (fn [ev] (events.emit ev))})
-            flush (M.flush-closure backend agent session)
+                     :on-event (fn [ev] (events.emit ev))}))
+            agent (make-agent)
+            _ (each [_ message (ipairs loaded-messages)]
+                (table.insert agent.messages message))
+            flush (session-lifecycle.make-flush backend agent session
+                                                 (length loaded-messages))
             _state-box {:state nil}
             state (run-state.make
                     {: opts
@@ -427,6 +606,8 @@
                      : agent : session : flush
                      :session-backend backend
                      :state-box _state-box
+                     :make-agent-from-opts
+                     (fn [_opts _on-event _agent-extra] (make-agent))
                      : session-lifecycle
                      :submit-user-turn!
                      (fn [st line ?opts]
@@ -441,7 +622,7 @@
                           false))
             ctx {:state state
                  :on-submit (fn [line]
-                              (state.submit-user-turn! line {:emit-user? true}))
+                              (M.submit-line! state line))
                  :on-tick (fn [] (M.on-tick state))
                  :is-busy? (fn [] state.busy?)
                  :request-cancel cancel!
@@ -462,6 +643,10 @@
         ;; this hook returns.
         (set _G.__fen_demo_request_cancel cancel!)
         (emit-initial-status! opts agent)
+        ;; Replay canonical persisted messages into the presenter only. They
+        ;; are already in agent.messages and the flush starts after them, so
+        ;; boot hydration cannot duplicate storage entries.
+        (web-ingest.hydrate! loaded-messages)
         (emit-agent-started! agent opts)
         (let [(init-ok? init-err) (presenter-registry.init-active-presenter ctx)]
           (when (not init-ok?)

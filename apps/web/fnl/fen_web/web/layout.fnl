@@ -87,7 +87,7 @@
       (row (.. "queued " (tostring (or ev.queue "")) ": "
                (tostring (or ev.text ""))) :dim)
       (= ev.type :info)
-      (row (or ev.text "") :dim)
+      (row (or ev.text "") :system)
       (= ev.type :cancelled)
       (row "cancelled" :dim)
       (row (.. (tostring (or ev.type :event)) ": "
