@@ -21,6 +21,10 @@
          skeleton under this id; see apps/web/fnl/fen_web/web). -->
     <main id="fen-app" class="fen-app"></main>
 
+    <!-- Shell-owned workspace visibility panel. It reads the durable `fs:`
+         keyspace directly and never enters the VM/coroutine path. -->
+    <aside id="fen-workspace" class="fen-workspace"></aside>
+
     <!-- Mount point for the sandboxed preview iframe (host.preview creates
          the <iframe sandbox="allow-scripts"> under this id; fen-web#8). The
          agent renders the IndexedDB app tree here and drives it over a
